@@ -83,6 +83,9 @@
   "promptAllSettingsTooltip": {
     "message": "Wszystkie ustawienia"
   },
+  "shareExtension": {
+    "message": "Udostępnij rozszerzenie"
+  },
   "promptCommonSmartInputHint": {
     "message": "W polu czatu ustaw, jak klawisz Enter steruje nowymi wierszami i wysyłaniem wiadomości"
   },
@@ -102,7 +105,7 @@
     "message": "Jeśli Timeline jest przydatny, wesprzyj go gwiazdką na GitHubie."
   },
   "promptCommonMirrorSiteHint": {
-    "message": "Dodaj nową stronę czatu AI, aby odblokować funkcje takie jak oś czasu i prompty."
+    "message": "Dostosuj inne strony czatu AI, aby odblokować oś czasu, prompty, szybkie notatki i inne funkcje."
   },
   "promptCommonGithubStarButton": {
     "message": "Przejdź do GitHuba"
@@ -834,13 +837,13 @@
     "message": "Adapt a new AI platform"
   },
   "mirrorSiteAdapterHeroDesc": {
-    "message": "Nie widzisz używanej przez siebie strony czatu AI? Niezależnie czy to lustrzana strona AI, wewnętrzny czat AI firmy, czy niszowa strona AI — możesz poprosić o adaptację. Po jej dodaniu odblokujesz funkcje takie jak oś czasu, prompty i szybkie notatki."
+    "message": "Używana przez Ciebie strona czatu AI nie jest obsługiwana? Niezależnie czy to wewnętrzny czat AI firmy, czy niszowa strona AI — możesz poprosić o adaptację. Po jej dodaniu odblokujesz funkcje takie jak oś czasu, prompty i szybkie notatki."
   },
   "mirrorSiteAdapterStartButton": {
     "message": "Start setup"
   },
   "mirrorSiteNativeSupportedTitle": {
-    "message": "Natywnie obsługiwane platformy AI:"
+    "message": "Natywnie obsługiwane platformy AI i ich witryny lustrzane:"
   },
   "mirrorSiteWizardStep1": {
     "message": "Open the AI site you want to adapt and start a new conversation"
@@ -920,6 +923,12 @@
   "timelineAICompleteToastHint": {
     "message": "Pokaż przypomnienie, gdy odpowiedź AI się zakończy, a Ty nie jesteś w najnowszym miejscu"
   },
+  "preventAutoScrollLabel": {
+    "message": "Zachowaj pozycję czytania przy wysyłaniu"
+  },
+  "preventAutoScrollHint": {
+    "message": "Gdy wysyłasz wiadomość podczas przeglądania wcześniejszej historii, strona pozostaje w bieżącej pozycji czytania zamiast przeskakiwać na dół"
+  },
   "timelineThemeColorLabel": {
     "message": "Kolor motywu osi czasu"
   },
@@ -928,5 +937,32 @@
   },
   "timelineThemeColorManageButton": {
     "message": "Ustaw"
+  },
+  "geminiWatermarkTitle": {
+    "message": "Usuwanie znaku wodnego Nano Banana"
+  },
+  "geminiWatermarkHint": {
+    "message": "Pokazuje opcje pobierania z usuwaniem znaku wodnego dla obrazów wygenerowanych przez Gemini, aby pobrać oryginalny obraz lub obraz bez znaku wodnego w prawym dolnym rogu."
+  },
+  "geminiWatermarkDownload": {
+    "message": "Pobierz obraz bez znaku wodnego"
+  },
+  "geminiWatermarkDownloadOriginal": {
+    "message": "Pobierz oryginalny obraz"
+  },
+  "geminiWatermarkErrorGeneric": {
+    "message": "Nie udało się usunąć znaku wodnego"
+  },
+  "geminiWatermarkErrorNoImage": {
+    "message": "Nie znaleziono obrazu do przetworzenia"
+  },
+  "geminiWatermarkErrorTooSmall": {
+    "message": "Obraz jest zbyt mały, aby usunąć znak wodny"
+  },
+  "geminiWatermarkErrorNoWatermark": {
+    "message": "Nie wykryto znaku wodnego Gemini"
+  },
+  "geminiWatermarkErrorUnreadable": {
+    "message": "Nie można odczytać pikseli (ograniczenia przeglądarki). Spróbuj pobrać oryginał"
   }
 }

@@ -83,6 +83,9 @@
   "promptAllSettingsTooltip": {
     "message": "전체 설정"
   },
+  "shareExtension": {
+    "message": "확장 프로그램 공유"
+  },
   "promptCommonSmartInputHint": {
     "message": "대화 상자에서 Enter 키로 줄바꿈과 메시지 전송을 제어하는 방식을 설정합니다"
   },
@@ -102,7 +105,7 @@
     "message": "Timeline이 도움이 되었다면 GitHub에서 Star로 지원해 주세요."
   },
   "promptCommonMirrorSiteHint": {
-    "message": "새로운 AI 대화 사이트를 추가하여 타임라인, 프롬프트 등의 기능을 사용할 수 있습니다."
+    "message": "다른 AI 대화 사이트를 지원해 타임라인, 프롬프트, 플래시 노트 등의 기능을 사용할 수 있습니다."
   },
   "promptCommonGithubStarButton": {
     "message": "GitHub로 이동"
@@ -885,13 +888,13 @@
     "message": "Adapt a new AI platform"
   },
   "mirrorSiteAdapterHeroDesc": {
-    "message": "사용 중인 AI 대화 사이트가 없나요? AI 미러 사이트, 사내 AI 대화 사이트, 잘 알려지지 않은 AI 사이트 모두 지원을 요청할 수 있습니다. 적용 후에는 ‘타임라인’, ‘프롬프트’, ‘플래시 노트’ 같은 기능을 사용할 수 있습니다."
+    "message": "사용 중인 AI 대화 사이트가 지원되지 않나요? 사내 AI 대화 사이트, 잘 알려지지 않은 AI 사이트 모두 지원을 요청할 수 있습니다. 적용 후에는 ‘타임라인’, ‘프롬프트’, ‘플래시 노트’ 같은 기능을 사용할 수 있습니다."
   },
   "mirrorSiteAdapterStartButton": {
     "message": "Start setup"
   },
   "mirrorSiteNativeSupportedTitle": {
-    "message": "기본 지원 AI 플랫폼:"
+    "message": "기본 지원 AI 플랫폼 및 미러 사이트:"
   },
   "mirrorSiteWizardStep1": {
     "message": "Open the AI site you want to adapt and start a new conversation"
@@ -971,6 +974,12 @@
   "timelineAICompleteToastHint": {
     "message": "AI 답변이 완료되었고 최신 위치에 있지 않을 때 알림을 표시합니다"
   },
+  "preventAutoScrollLabel": {
+    "message": "전송 시 읽던 위치 유지"
+  },
+  "preventAutoScrollHint": {
+    "message": "이전 기록을 보는 중에 메시지를 보내도 페이지가 맨 아래로 이동하지 않고 현재 읽던 위치를 유지합니다"
+  },
   "timelineThemeColorLabel": {
     "message": "타임라인 테마 색상"
   },
@@ -979,5 +988,32 @@
   },
   "timelineThemeColorManageButton": {
     "message": "설정"
+  },
+  "geminiWatermarkTitle": {
+    "message": "Nano Banana 워터마크 제거"
+  },
+  "geminiWatermarkHint": {
+    "message": "Gemini에서 생성된 이미지에 워터마크 제거 다운로드 옵션을 표시하여 원본 이미지 또는 오른쪽 아래 워터마크를 제거한 이미지를 다운로드할 수 있습니다."
+  },
+  "geminiWatermarkDownload": {
+    "message": "워터마크 제거 이미지 다운로드"
+  },
+  "geminiWatermarkDownloadOriginal": {
+    "message": "원본 이미지 다운로드"
+  },
+  "geminiWatermarkErrorGeneric": {
+    "message": "워터마크 제거에 실패했습니다"
+  },
+  "geminiWatermarkErrorNoImage": {
+    "message": "처리할 이미지를 찾을 수 없습니다"
+  },
+  "geminiWatermarkErrorTooSmall": {
+    "message": "이미지가 너무 작아 워터마크를 제거할 수 없습니다"
+  },
+  "geminiWatermarkErrorNoWatermark": {
+    "message": "Gemini 워터마크가 감지되지 않았습니다"
+  },
+  "geminiWatermarkErrorUnreadable": {
+    "message": "이미지 픽셀을 읽을 수 없습니다(브라우저 보안 제한). 원본 다운로드를 시도해 보세요"
   }
 }

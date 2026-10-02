@@ -83,6 +83,9 @@
   "promptAllSettingsTooltip": {
     "message": "Semua pengaturan"
   },
+  "shareExtension": {
+    "message": "Bagikan ekstensi"
+  },
   "promptCommonSmartInputHint": {
     "message": "Di kotak chat, atur cara tombol Enter mengontrol baris baru dan pengiriman pesan"
   },
@@ -102,7 +105,7 @@
     "message": "Jika Timeline berguna bagi Anda, dukung dengan Star di GitHub."
   },
   "promptCommonMirrorSiteHint": {
-    "message": "Tambahkan situs chat AI baru untuk membuka fitur seperti Timeline dan prompt."
+    "message": "Sesuaikan situs chat AI lainnya untuk membuka fitur seperti Timeline, prompt, catatan cepat, dan lainnya."
   },
   "promptCommonGithubStarButton": {
     "message": "Buka GitHub"
@@ -834,13 +837,13 @@
     "message": "Adapt a new AI platform"
   },
   "mirrorSiteAdapterHeroDesc": {
-    "message": "Tidak menemukan situs chat AI yang Anda gunakan? Baik itu situs cermin AI, chat AI internal perusahaan, atau situs AI khusus, Anda dapat mengajukan adaptasi. Setelah berhasil, Anda dapat membuka fitur seperti Timeline, prompt, dan catatan cepat."
+    "message": "Situs chat AI yang Anda gunakan belum didukung? Baik itu chat AI internal perusahaan, atau situs AI khusus, Anda dapat mengajukan adaptasi. Setelah berhasil, Anda dapat membuka fitur seperti Timeline, prompt, dan catatan cepat."
   },
   "mirrorSiteAdapterStartButton": {
     "message": "Start setup"
   },
   "mirrorSiteNativeSupportedTitle": {
-    "message": "Platform AI yang didukung secara native:"
+    "message": "Platform AI yang didukung secara native beserta situs mirrornya:"
   },
   "mirrorSiteWizardStep1": {
     "message": "Open the AI site you want to adapt and start a new conversation"
@@ -920,6 +923,12 @@
   "timelineAICompleteToastHint": {
     "message": "Tampilkan pengingat saat balasan AI selesai dan Anda tidak berada di posisi terbaru"
   },
+  "preventAutoScrollLabel": {
+    "message": "Pertahankan posisi baca saat mengirim"
+  },
+  "preventAutoScrollHint": {
+    "message": "Saat Anda mengirim pesan sambil melihat riwayat sebelumnya, halaman tetap pada posisi baca Anda saat ini alih-alih melompat ke bawah"
+  },
   "timelineThemeColorLabel": {
     "message": "Warna tema linimasa"
   },
@@ -928,5 +937,32 @@
   },
   "timelineThemeColorManageButton": {
     "message": "Atur"
+  },
+  "geminiWatermarkTitle": {
+    "message": "Penghapus watermark Nano Banana"
+  },
+  "geminiWatermarkHint": {
+    "message": "Tampilkan opsi unduhan penghapus watermark pada gambar yang dibuat Gemini, sehingga Anda dapat mengunduh gambar asli atau gambar tanpa watermark di kanan bawah."
+  },
+  "geminiWatermarkDownload": {
+    "message": "Unduh gambar tanpa watermark"
+  },
+  "geminiWatermarkDownloadOriginal": {
+    "message": "Unduh gambar asli"
+  },
+  "geminiWatermarkErrorGeneric": {
+    "message": "Gagal menghapus watermark"
+  },
+  "geminiWatermarkErrorNoImage": {
+    "message": "Could not find an image to process"
+  },
+  "geminiWatermarkErrorTooSmall": {
+    "message": "Image is too small to remove a watermark"
+  },
+  "geminiWatermarkErrorNoWatermark": {
+    "message": "No Gemini watermark detected on this image"
+  },
+  "geminiWatermarkErrorUnreadable": {
+    "message": "Cannot read image pixels (blocked by browser security). Try downloading the original instead."
   }
 }

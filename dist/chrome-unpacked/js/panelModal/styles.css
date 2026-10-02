@@ -114,6 +114,7 @@
 .ait-panel-modal-close {
     width: 32px;
     height: 32px;
+    margin-left: 5px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -137,8 +138,8 @@
 }
 
 .ait-panel-modal-close svg {
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
     stroke-width: 2.5;
 }
 
@@ -146,10 +147,8 @@
 .ait-panel-modal-sidebar-title {
     font-size: 16px;
     font-weight: 700;
-    background: linear-gradient(135deg, #7450ff 0%, #9b7dff 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    color: #24324a;
+    margin-left: -2px;
     white-space: nowrap;
     letter-spacing: -0.3px;
 }
@@ -182,7 +181,7 @@
     align-items: center;
     gap: 10px;
     padding: 8px 12px;
-    margin: 0 12px 6px 12px;
+    margin: 0 12px;
     width: calc(100% - 24px);
     background: transparent;
     border: none;
@@ -317,13 +316,48 @@
 
 /* 标题栏（右侧顶部） */
 .ait-panel-modal-header {
+    position: relative;
     height: 56px;
     padding: 0 24px;
     display: flex;
     align-items: center;
+    justify-content: center;
     border-bottom: 1px solid rgba(0, 0, 0, 0.06);
     flex-shrink: 0;
     background: #fafafa;
+}
+
+.ait-panel-modal-share {
+    position: absolute;
+    right: 18px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: #6b7280;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.ait-panel-modal-share:hover {
+    background: rgba(0, 0, 0, 0.06);
+    color: #374151;
+}
+
+.ait-panel-modal-share:active {
+    transform: translateY(-50%) scale(0.96);
+}
+
+.ait-panel-modal-share svg {
+    width: 18px;
+    height: 18px;
 }
 
 .ait-panel-modal-title {
@@ -374,4 +408,3 @@
         transform: scale(1);
     }
 }
-

@@ -83,6 +83,9 @@
   "promptAllSettingsTooltip": {
     "message": "All settings"
   },
+  "shareExtension": {
+    "message": "Share extension"
+  },
   "promptCommonSmartInputHint": {
     "message": "In the chat box, set how the Enter key controls new lines and sending messages"
   },
@@ -102,7 +105,7 @@
     "message": "If Timeline is useful to you, please support it with a GitHub Star."
   },
   "promptCommonMirrorSiteHint": {
-    "message": "Add a new AI chat site to unlock features like Timeline and prompts."
+    "message": "Adapt other AI chat sites to unlock Timeline, prompts, Flash Notes, and more."
   },
   "promptCommonGithubStarButton": {
     "message": "Go to GitHub"
@@ -858,13 +861,13 @@
     "message": "Adapt a new AI platform"
   },
   "mirrorSiteAdapterHeroDesc": {
-    "message": "Can't find the AI chat site you use? Whether it's an AI mirror site, an internal company AI chat, or a niche AI site, you can request support. Once it's adapted, you'll unlock features like Timeline, prompts, and flash notes."
+    "message": "The AI chat site you use isn't supported? Whether it's an internal company AI chat or a niche AI site, you can request support. Once it's adapted, you'll unlock features like Timeline, prompts, and flash notes."
   },
   "mirrorSiteAdapterStartButton": {
     "message": "Start setup"
   },
   "mirrorSiteNativeSupportedTitle": {
-    "message": "Natively supported AI platforms:"
+    "message": "Natively supported AI platforms and their mirror sites:"
   },
   "mirrorSiteWizardStep1": {
     "message": "Open the AI site you want to adapt and start a new conversation"
@@ -944,6 +947,12 @@
   "timelineAICompleteToastHint": {
     "message": "Show a reminder when an AI reply finishes while you are not at the latest position"
   },
+  "preventAutoScrollLabel": {
+    "message": "Keep reading position on send"
+  },
+  "preventAutoScrollHint": {
+    "message": "When you send a message while viewing earlier history, the page stays at your current reading position instead of jumping to the bottom"
+  },
   "timelineThemeColorLabel": {
     "message": "Timeline theme colour"
   },
@@ -952,5 +961,32 @@
   },
   "timelineThemeColorManageButton": {
     "message": "Set"
+  },
+  "geminiWatermarkTitle": {
+    "message": "Nano Banana watermark remover"
+  },
+  "geminiWatermarkHint": {
+    "message": "Show watermark-removal download options on Gemini-generated images so you can download the original image or an image with the bottom-right watermark removed."
+  },
+  "geminiWatermarkDownload": {
+    "message": "Download watermark-free image"
+  },
+  "geminiWatermarkDownloadOriginal": {
+    "message": "Download original image"
+  },
+  "geminiWatermarkErrorGeneric": {
+    "message": "Watermark removal failed"
+  },
+  "geminiWatermarkErrorNoImage": {
+    "message": "Could not find an image to process"
+  },
+  "geminiWatermarkErrorTooSmall": {
+    "message": "Image is too small to remove a watermark"
+  },
+  "geminiWatermarkErrorNoWatermark": {
+    "message": "No Gemini watermark detected on this image"
+  },
+  "geminiWatermarkErrorUnreadable": {
+    "message": "Cannot read image pixels (blocked by browser security). Try downloading the original instead."
   }
 }

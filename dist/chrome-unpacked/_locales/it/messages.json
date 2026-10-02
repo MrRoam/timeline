@@ -83,6 +83,9 @@
   "promptAllSettingsTooltip": {
     "message": "Tutte le impostazioni"
   },
+  "shareExtension": {
+    "message": "Condividi estensione"
+  },
   "promptCommonSmartInputHint": {
     "message": "Nella casella di chat, imposta come il tasto Enter controlla le nuove righe e l'invio dei messaggi"
   },
@@ -102,7 +105,7 @@
     "message": "Se Timeline ti è utile, supportalo con una stella su GitHub."
   },
   "promptCommonMirrorSiteHint": {
-    "message": "Aggiungi un nuovo sito di chat AI per sbloccare funzioni come Timeline e prompt."
+    "message": "Adatta altri siti di chat AI per sbloccare Timeline, prompt, note rapide e altro."
   },
   "promptCommonGithubStarButton": {
     "message": "Vai su GitHub"
@@ -834,13 +837,13 @@
     "message": "Adapt a new AI platform"
   },
   "mirrorSiteAdapterHeroDesc": {
-    "message": "Non trovi il sito di chat AI che usi? Che si tratti di un sito mirror AI, di una chat AI interna aziendale o di un sito AI di nicchia, puoi richiedere l'adattamento. Una volta completato, potrai sbloccare funzioni come Timeline, prompt e note rapide."
+    "message": "Il sito di chat AI che usi non è supportato? Che si tratti di una chat AI interna aziendale o di un sito AI di nicchia, puoi richiedere l'adattamento. Una volta completato, potrai sbloccare funzioni come Timeline, prompt e note rapide."
   },
   "mirrorSiteAdapterStartButton": {
     "message": "Start setup"
   },
   "mirrorSiteNativeSupportedTitle": {
-    "message": "Piattaforme AI supportate nativamente:"
+    "message": "Piattaforme AI supportate nativamente e relativi siti mirror:"
   },
   "mirrorSiteWizardStep1": {
     "message": "Open the AI site you want to adapt and start a new conversation"
@@ -920,6 +923,12 @@
   "timelineAICompleteToastHint": {
     "message": "Mostra un promemoria quando la risposta AI è completata e non sei nella posizione più recente"
   },
+  "preventAutoScrollLabel": {
+    "message": "Mantieni la posizione di lettura all'invio"
+  },
+  "preventAutoScrollHint": {
+    "message": "Quando invii un messaggio mentre visualizzi la cronologia precedente, la pagina rimane nella posizione di lettura attuale invece di saltare in fondo"
+  },
   "timelineThemeColorLabel": {
     "message": "Colore tema della timeline"
   },
@@ -928,5 +937,32 @@
   },
   "timelineThemeColorManageButton": {
     "message": "Imposta"
+  },
+  "geminiWatermarkTitle": {
+    "message": "Rimozione filigrana Nano Banana"
+  },
+  "geminiWatermarkHint": {
+    "message": "Mostra opzioni di download con rimozione della filigrana sulle immagini generate da Gemini, per scaricare l’immagine originale o quella senza filigrana in basso a destra."
+  },
+  "geminiWatermarkDownload": {
+    "message": "Scarica immagine senza filigrana"
+  },
+  "geminiWatermarkDownloadOriginal": {
+    "message": "Scarica immagine originale"
+  },
+  "geminiWatermarkErrorGeneric": {
+    "message": "Rimozione della filigrana non riuscita"
+  },
+  "geminiWatermarkErrorNoImage": {
+    "message": "Nessuna immagine da elaborare trovata"
+  },
+  "geminiWatermarkErrorTooSmall": {
+    "message": "Immagine troppo piccola per rimuovere la filigrana"
+  },
+  "geminiWatermarkErrorNoWatermark": {
+    "message": "Nessuna filigrana Gemini rilevata"
+  },
+  "geminiWatermarkErrorUnreadable": {
+    "message": "Impossibile leggere i pixel (sicurezza del browser). Prova a scaricare l’originale"
   }
 }

@@ -70,7 +70,10 @@ class StarredTab extends BaseTab {
             );
         });
         this.addEventListener(addFolderBtn, 'mouseleave', () => { window.globalTooltipManager.hide(); });
-        this.addEventListener(addFolderBtn, 'click', () => this.treeRenderer.handleCreateFolder());
+        this.addEventListener(addFolderBtn, 'click', () => {
+            void this.treeRenderer.handleCreateFolder()
+                .catch(e => console.error('[StarredTab] Failed to create folder:', e));
+        });
         toolbar.appendChild(addFolderBtn);
 
         const searchInput = document.createElement('input');
@@ -82,14 +85,16 @@ class StarredTab extends BaseTab {
 
         this.addEventListener(searchInput, 'input', (e) => {
             this.setState('searchQuery', e.target.value.trim().toLowerCase());
-            this.updateList();
+            void this.updateList()
+                .catch(err => console.error('[StarredTab] Failed to update list:', err));
         });
         this.addEventListener(searchInput, 'keydown', (e) => {
             if (e.key === 'Escape') {
                 const input = this.getDomRef('searchInput');
                 if (input) input.value = '';
                 this.setState('searchQuery', '');
-                this.updateList();
+                void this.updateList()
+                    .catch(err => console.error('[StarredTab] Failed to update list:', err));
             }
         });
         this.setDomRef('searchInput', searchInput);
@@ -101,55 +106,6 @@ class StarredTab extends BaseTab {
         listContainer.className = 'starred-list-tree';
         this.setDomRef('listContainer', listContainer);
         container.appendChild(listContainer);
-
-        const sidebarPlatforms = typeof getPlatformsByFeature === 'function' ? getPlatformsByFeature('sidebarStarred') : [];
-        if (sidebarPlatforms.length > 0) {
-            const divider = document.createElement('div');
-            divider.className = 'starred-sidebar-divider';
-            container.appendChild(divider);
-
-            const hideToggleSection = document.createElement('div');
-            hideToggleSection.className = 'starred-hide-toggle-section';
-            hideToggleSection.innerHTML = `
-                <div class="setting-item">
-                    <div class="setting-info">
-                        <div class="setting-label">${chrome.i18n.getMessage('hideStarredFromListLabel') || '去重模式'}</div>
-                        <div class="setting-hint">${chrome.i18n.getMessage('hideStarredFromListHint') || '开启后，已加入文件夹的对话将从侧边栏列表中隐藏'}</div>
-                    </div>
-                    <label class="ait-toggle-switch">
-                        <input type="checkbox" id="hide-starred-from-list-toggle">
-                        <span class="ait-toggle-slider"></span>
-                    </label>
-                </div>
-            `;
-            container.appendChild(hideToggleSection);
-
-            const hideToggle = hideToggleSection.querySelector('#hide-starred-from-list-toggle');
-            StorageAdapter.get('hideStarredFromNativeList').then(val => {
-                hideToggle.checked = !!val;
-            });
-            this.addEventListener(hideToggle, 'change', async () => {
-                await StorageAdapter.set('hideStarredFromNativeList', hideToggle.checked);
-            });
-
-            const manageSection = document.createElement('div');
-            manageSection.className = 'starred-sidebar-toggle';
-            manageSection.innerHTML = `
-                <div class="setting-item">
-                    <div class="setting-info">
-                        <div class="setting-label">${chrome.i18n.getMessage('starredDisplayLabel') || '显示文件夹'}</div>
-                        <div class="setting-hint">${chrome.i18n.getMessage('sidebarStarredHint') || 'Control which platforms show the starred folder in their sidebar'}</div>
-                    </div>
-                    <button class="starred-manage-btn">${chrome.i18n.getMessage('promptBtnSwitch') || '开关'}</button>
-                </div>
-            `;
-            container.appendChild(manageSection);
-
-            const manageBtn = manageSection.querySelector('.starred-manage-btn');
-            this.addEventListener(manageBtn, 'click', () => {
-                this._showPlatformManageModal(sidebarPlatforms);
-            });
-        }
 
         return container;
     }
@@ -174,57 +130,7 @@ class StarredTab extends BaseTab {
 
     async updateList() {
         const tree = await this.folderManager.getStarredByFolder();
-        this.treeRenderer.renderTree(tree);
-    }
-
-    // ==================== 平台管理弹窗 ====================
-
-    async _showPlatformManageModal(platforms) {
-        const settings = await StorageAdapter.get('sidebarStarredPlatformSettings') || {};
-
-        const overlay = document.createElement('div');
-        overlay.className = 'starred-platform-modal-overlay';
-
-        const platformItems = platforms.map(p => {
-            const logoHtml = p.logoPath
-                ? `<img src="${chrome.runtime.getURL(p.logoPath)}" alt="${p.name}">`
-                : `<span>${p.name.charAt(0)}</span>`;
-            const checked = settings[p.id] !== false ? 'checked' : '';
-            return `
-                <div class="starred-platform-item">
-                    <div class="starred-platform-info">
-                        <div class="starred-platform-logo">${logoHtml}</div>
-                        <span class="starred-platform-name">${p.name}</span>
-                    </div>
-                    <label class="ait-toggle-switch">
-                        <input type="checkbox" data-platform-id="${p.id}" ${checked}>
-                        <span class="ait-toggle-slider"></span>
-                    </label>
-                </div>`;
-        }).join('');
-
-        overlay.innerHTML = `
-            <div class="starred-platform-modal">
-                <div class="starred-platform-modal-header">
-                    <span>${chrome.i18n.getMessage('mkvzpx') || 'Supported Platforms'}</span>
-                    <button class="starred-platform-modal-close">✕</button>
-                </div>
-                <div class="starred-platform-modal-body">${platformItems}</div>
-            </div>`;
-
-        document.body.appendChild(overlay);
-
-        const close = () => overlay.remove();
-        overlay.querySelector('.starred-platform-modal-close').addEventListener('click', close);
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-
-        overlay.querySelectorAll('input[data-platform-id]').forEach(cb => {
-            cb.addEventListener('change', async () => {
-                const current = await StorageAdapter.get('sidebarStarredPlatformSettings') || {};
-                current[cb.dataset.platformId] = cb.checked;
-                await StorageAdapter.set('sidebarStarredPlatformSettings', current);
-            });
-        });
+        await this.treeRenderer.renderTree(tree);
     }
 
 }

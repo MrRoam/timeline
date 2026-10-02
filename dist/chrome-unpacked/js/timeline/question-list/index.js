@@ -52,33 +52,7 @@ class QuestionListPopup {
         title.className = 'ait-ql-title';
         title.textContent = chrome.i18n.getMessage('questionListTitle') || 'Questions';
 
-        const headerRight = document.createElement('div');
-        headerRight.className = 'ait-ql-header-right';
-
-        const settingsBtn = document.createElement('button');
-        settingsBtn.className = 'ait-ql-settings';
-        settingsBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>';
-        settingsBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.hide();
-            if (window.panelModal) {
-                window.panelModal.show('timeline');
-            }
-        });
-
-        // const closeBtn = document.createElement('button');
-        // closeBtn.className = 'ait-ql-close';
-        // closeBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-        // closeBtn.addEventListener('click', (e) => {
-        //     e.stopPropagation();
-        //     this.hide();
-        // });
-
-        headerRight.appendChild(settingsBtn);
-        // headerRight.appendChild(closeBtn);
-
         header.appendChild(title);
-        header.appendChild(headerRight);
 
         // List
         this._listEl = document.createElement('div');
@@ -151,6 +125,7 @@ class QuestionListPopup {
         }
 
         const frag = document.createDocumentFragment();
+        const supportsTimelineTooltipActions = tm.getTimelineFeatures?.()?.timeline_tooltipActions === true;
 
         tm.markers.forEach((marker, i) => {
             const item = document.createElement('div');
@@ -167,46 +142,50 @@ class QuestionListPopup {
             text.className = 'ait-ql-item-text';
             text.textContent = marker.summary || '...';
 
-            // Pin icon
-            const isPinned = tm.pinned.has(marker.id);
-            const pin = document.createElement('span');
-            pin.className = 'ait-ql-item-pin';
-            if (!isPinned) pin.classList.add('not-pinned');
-            const pinTip = () => tm.pinned.has(marker.id)
-                ? (chrome.i18n.getMessage('unpinAction') || '取消标记重点')
-                : (chrome.i18n.getMessage('pinAction') || '标记重点');
-            pin.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                const ok = await tm.togglePin(marker.id);
-                if (ok) {
-                    pin.classList.toggle('not-pinned', !tm.pinned.has(marker.id));
-                }
-            });
-            pin.addEventListener('mouseenter', () => {
-                window.globalTooltipManager.show(`ql-pin-${i}`, 'button', pin, pinTip(), { placement: 'top' });
-            });
-            pin.addEventListener('mouseleave', () => { window.globalTooltipManager.hide(); });
+            let pin = null;
+            let star = null;
+            if (supportsTimelineTooltipActions) {
+                // Pin icon
+                const isPinned = tm.pinned.has(marker.id);
+                pin = document.createElement('span');
+                pin.className = 'ait-ql-item-pin';
+                if (!isPinned) pin.classList.add('not-pinned');
+                const pinTip = () => tm.pinned.has(marker.id)
+                    ? (chrome.i18n.getMessage('unpinAction') || '取消标记重点')
+                    : (chrome.i18n.getMessage('pinAction') || '标记重点');
+                pin.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const ok = await tm.togglePin(marker.id);
+                    if (ok) {
+                        pin.classList.toggle('not-pinned', !tm.pinned.has(marker.id));
+                    }
+                });
+                pin.addEventListener('mouseenter', () => {
+                    window.globalTooltipManager.show(`ql-pin-${i}`, 'button', pin, pinTip(), { placement: 'top' });
+                });
+                pin.addEventListener('mouseleave', () => { window.globalTooltipManager.hide(); });
 
-            // Star icon
-            const isStarred = tm.starred.has(marker.id);
-            const starTip = () => tm.starred.has(marker.id)
-                ? (chrome.i18n.getMessage('unstarAction') || '取消收藏')
-                : (chrome.i18n.getMessage('starAction') || '收藏到文件夹');
-            const star = document.createElement('span');
-            star.className = 'ait-ql-item-star';
-            if (!isStarred) star.classList.add('not-starred');
-            star.dataset.turnId = marker.id;
-            star.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                const result = await tm.toggleStar(marker.id);
-                if (result?.success) {
-                    star.classList.toggle('not-starred', !tm.starred.has(marker.id));
-                }
-            });
-            star.addEventListener('mouseenter', () => {
-                window.globalTooltipManager.show(`ql-star-${i}`, 'button', star, starTip(), { placement: 'top' });
-            });
-            star.addEventListener('mouseleave', () => { window.globalTooltipManager.hide(); });
+                // Star icon
+                const isStarred = tm.starred.has(marker.id);
+                const starTip = () => tm.starred.has(marker.id)
+                    ? (chrome.i18n.getMessage('unstarAction') || '取消收藏')
+                    : (chrome.i18n.getMessage('starAction') || '收藏到文件夹');
+                star = document.createElement('span');
+                star.className = 'ait-ql-item-star';
+                if (!isStarred) star.classList.add('not-starred');
+                star.dataset.turnId = marker.id;
+                star.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const result = await tm.toggleStar(marker.id);
+                    if (result?.success) {
+                        star.classList.toggle('not-starred', !tm.starred.has(marker.id));
+                    }
+                });
+                star.addEventListener('mouseenter', () => {
+                    window.globalTooltipManager.show(`ql-star-${i}`, 'button', star, starTip(), { placement: 'top' });
+                });
+                star.addEventListener('mouseleave', () => { window.globalTooltipManager.hide(); });
+            }
 
             text.addEventListener('mouseenter', () => {
                 if (text.scrollWidth > text.clientWidth) {
@@ -231,8 +210,8 @@ class QuestionListPopup {
 
             item.appendChild(idx);
             item.appendChild(text);
-            item.appendChild(pin);
-            item.appendChild(star);
+            if (pin) item.appendChild(pin);
+            if (star) item.appendChild(star);
             frag.appendChild(item);
         });
 

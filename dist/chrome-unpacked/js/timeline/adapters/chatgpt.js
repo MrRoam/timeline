@@ -4,21 +4,318 @@
  * Supports: 
  *   - chatgpt.com/c/xxx (普通对话)
  *   - chatgpt.com/g/xxx/c/xxx (GPT 对话)
- *   - chatgpt.com/share/e/xxx (分享页面)
+ *   - chatgpt.com/share/xxx 或 chatgpt.com/share/e/xxx (分享页面)
  *   - chat.openai.com (旧域名)
  */
 
 class ChatGPTAdapter extends SiteAdapter {
     constructor() {
         super();
+        // ChatGPT 会把视口外轮次虚拟化为空壳；文本只保留在当前对话的内存缓存中。
+        this._turnTextCache = new Map();
+        this._capturedMatchTexts = new Map();
+        this._capturedTextIds = new Set();
+        this._textCacheConvId = null;
+        this._turnRolesDirty = true;
+        this._usesVirtualizedTurnSelector = false;
+        this._usesHeadingTurnSelector = false;
     }
 
-    matches(url) {
+    static TEXT_CACHE_MAX_TEXT_LENGTH = 200;
+    static TEXT_CACHE_MAX_ENTRIES = 3000;
+
+    _pullConvTexts(conversationId) {
+        if (!conversationId) return 0;
+
+        let received = null;
+        const handler = (event) => {
+            if (typeof event.detail !== 'string') return;
+            try {
+                const payload = JSON.parse(event.detail);
+                if (payload?.conversationId === conversationId) received = payload;
+            } catch {
+                received = null;
+            }
+        };
+        try {
+            document.addEventListener('ait-gpt-user-texts-result', handler);
+            document.dispatchEvent(new CustomEvent('ait-gpt-user-texts-pull', {
+                detail: conversationId
+            }));
+        } catch {
+            return 0;
+        } finally {
+            document.removeEventListener('ait-gpt-user-texts-result', handler);
+        }
+
+        const texts = received?.texts;
+        if (!texts || typeof texts !== 'object' || Array.isArray(texts)) return 0;
+
+        this._capturedMatchTexts = new Map(
+            Object.entries(texts).filter(([, text]) => typeof text === 'string')
+        );
+        const nextCapturedTextIds = new Set(this._capturedMatchTexts.keys());
+        let changedCount = 0;
+        this._capturedTextIds.forEach(id => {
+            if (!nextCapturedTextIds.has(id) && this._turnTextCache.delete(id)) {
+                changedCount++;
+            }
+        });
+        this._capturedMatchTexts.forEach((text, id) => {
+            const previous = this._turnTextCache.get(id);
+            this._cacheTurnText(id, text);
+            if (this._turnTextCache.get(id) !== previous) changedCount++;
+        });
+        this._capturedTextIds = nextCapturedTextIds;
+        return changedCount;
+    }
+
+    syncCapturedChatsData() {
+        const conversationId = this.extractConversationId(location.pathname);
+        if (conversationId !== this._textCacheConvId) {
+            this._textCacheConvId = conversationId;
+            this._turnTextCache.clear();
+            this._capturedTextIds.clear();
+            this._capturedMatchTexts.clear();
+        } else if (this._capturedTextIds.size > 0) {
+            return;
+        }
+        // 接口可能在实例销毁与重建之间返回；空缓存允许在下一次渲染时重试。
+        this._pullConvTexts(conversationId);
+    }
+
+    handleCapturedChatsDataUpdated(conversationId) {
+        const currentConversationId = this.extractConversationId(location.pathname);
+        if (!conversationId || conversationId !== currentConversationId) return 0;
+
+        if (this._textCacheConvId !== conversationId) {
+            this._textCacheConvId = conversationId;
+            this._turnTextCache.clear();
+            this._capturedTextIds.clear();
+            this._capturedMatchTexts.clear();
+        }
+        return this._pullConvTexts(conversationId);
+    }
+
+    subscribeCapturedChatsDataUpdated(callback) {
+        if (typeof callback !== 'function') return () => {};
+
+        const handler = (event) => {
+            const conversationId = typeof event.detail === 'string' ? event.detail : '';
+            const changedCount = this.handleCapturedChatsDataUpdated(conversationId);
+            if (changedCount > 0) callback({
+                conversationId,
+                changedCount,
+                rebuildMarkers: this._usesHeadingTurnSelector
+            });
+        };
+        document.addEventListener('ait-gpt-user-texts-updated', handler);
+        return () => document.removeEventListener('ait-gpt-user-texts-updated', handler);
+    }
+
+    isPlaceholderSummary(text) {
+        const normalized = String(text || '').trim();
+        return super.isPlaceholderSummary(normalized) || normalized === '[未加载的提问]';
+    }
+
+    /**
+     * 新版 ChatGPT 为每轮保留空壳容器，但只渲染视口附近的内容。
+     * 从最后一个真实轮次向前按 user/assistant 交替关系推导空壳角色。
+     */
+    _markTurnRoles() {
+        const all = document.querySelectorAll('[data-turn-id-container][data-is-intersecting]');
+        if (!all.length) return false;
+
+        const seen = new Set();
+        const containers = [];
+        all.forEach(element => {
+            const id = element.getAttribute('data-turn-id-container');
+            if (!id || seen.has(id)) return;
+            seen.add(id);
+            containers.push(element);
+        });
+
+        const roles = new Array(containers.length).fill(null);
+        let nextRole = null;
+        for (let index = containers.length - 1; index >= 0; index--) {
+            const realRole = containers[index].querySelector('[data-turn]')?.getAttribute('data-turn');
+            let role = realRole === 'user' || realRole === 'assistant' ? realRole : null;
+            if (!role && nextRole) {
+                role = nextRole === 'user' ? 'assistant' : 'user';
+            }
+            roles[index] = role;
+            if (role) nextRole = role;
+        }
+
+        // ChatGPT 可能在开头保留隐藏占位轮；不能把推断出的 assistant 当作首个提问。
+        if (roles[0] === 'assistant') roles[0] = null;
+
+        containers.forEach((element, index) => {
+            const role = roles[index];
+            if (role === 'user') {
+                const id = element.getAttribute('data-turn-id-container');
+                if (id && !this._turnTextCache.has(id)) {
+                    const rawText = element.querySelector('.whitespace-pre-wrap')?.textContent;
+                    const text = (rawText || '').replace(/\s+/g, ' ').trim();
+                    if (text) this._cacheTurnText(id, text);
+                }
+            }
+
+            if (role) {
+                if (element.getAttribute('data-ait-turn') !== role) {
+                    element.setAttribute('data-ait-turn', role);
+                }
+            } else if (element.hasAttribute('data-ait-turn')) {
+                element.removeAttribute('data-ait-turn');
+            }
+        });
+        return true;
+    }
+
+    prepareTimelineNodes(context = {}) {
+        if (!context.force && !this._turnRolesDirty) return false;
+
+        const hasVirtualizedTurns = this._markTurnRoles();
+        this._usesVirtualizedTurnSelector = hasVirtualizedTurns
+            && document.querySelector('[data-turn-id-container][data-ait-turn="user"]') !== null;
+        this._usesHeadingTurnSelector = !this._usesVirtualizedTurnSelector
+            && !document.querySelector('[data-turn="user"][data-turn-id]')
+            && this._markHeadingTurns();
+        this._turnRolesDirty = false;
+        return true;
+    }
+
+    /** 2026-09 新 UI 以无障碍角色标题分隔消息，旧结构仍优先。 */
+    _markHeadingTurns() {
+        const main = document.querySelector('main');
+        if (!main) return false;
+        const candidates = new Map();
+        const roles = new Map();
+        for (const heading of main.querySelectorAll('h4.sr-only')) {
+            const label = (heading.textContent || '').replace(/\s+/g, ' ').trim()
+                .replace(/[:：]$/, '').trim().toLowerCase();
+            const role = ['you said', 'you', '你说', '你說'].includes(label) ? 'user'
+                : ['chatgpt said', 'chatgpt', 'assistant', 'chatgpt 说', 'chatgpt 說'].includes(label)
+                    ? 'assistant' : null;
+            if (!role || heading.closest('form, nav, aside, pre, code, .markdown, [role="dialog"]')) continue;
+            roles.set(heading, role);
+        }
+        for (const [heading, role] of roles) {
+            let container = heading.parentElement;
+            while (container && container !== main && !container.matches('form, nav, aside')) {
+                if (Array.from(container.querySelectorAll('h4.sr-only')).filter(node => roles.has(node)).length !== 1) break;
+                if (Array.from(container.children).some(child => child !== heading && !child.contains(heading))) {
+                    candidates.set(container, role);
+                    break;
+                }
+                container = container.parentElement;
+            }
+        }
+        document.querySelectorAll('[data-ait-heading-turn]').forEach(element => {
+            if (!candidates.has(element)) element.removeAttribute('data-ait-heading-turn');
+        });
+        candidates.forEach((role, element) => {
+            if (element.getAttribute('data-ait-heading-turn') !== role) {
+                element.setAttribute('data-ait-heading-turn', role);
+            }
+        });
+        return Array.from(candidates.values()).includes('user');
+    }
+
+    _extractHeadingText(element) {
+        const content = element.querySelector('.whitespace-pre-wrap');
+        if (content) return (content.textContent || '').replace(/\s+/g, ' ').trim();
+        const copy = element.cloneNode(true);
+        copy.querySelectorAll('h4.sr-only, .sr-only, button, nav, script, style, [hidden], [aria-hidden="true"], [data-ait-time], .ait-time-label')
+            .forEach(node => node.remove());
+        return (copy.textContent || '').replace(/\s+/g, ' ').trim();
+    }
+
+    _matchHeadingNodeId(element) {
+        const text = this._extractHeadingText(element);
+        if (!text) return null;
+        const matches = Array.from(this._capturedMatchTexts).filter(([, value]) =>
+            value.replace(/\s+/g, ' ').trim() === text
+        );
+        if (matches.length !== 1) return null;
+        const peers = Array.from(document.querySelectorAll('[data-ait-heading-turn="user"]'));
+        // API 与 DOM 的全文均唯一时才关联 ID，避免重复提问跳到错误位置。
+        if (peers.filter(peer => this._extractHeadingText(peer) === text).length !== 1) return null;
+        return matches[0][0];
+    }
+
+    getTimelineMessageRect(element) {
+        if (!element?.hasAttribute('data-ait-heading-turn')) return null;
+        try {
+            const own = element.getBoundingClientRect();
+            if (own.width > 0 && own.height > 0) return own;
+            const boxes = [];
+            const visit = node => {
+                if (node.matches('h4.sr-only, .sr-only, button, nav, script, style, [hidden], [aria-hidden="true"], [data-ait-time], .ait-time-label')) return;
+                const style = window.getComputedStyle(node);
+                if (style.display === 'none' || style.visibility === 'hidden'
+                    || style.position === 'fixed' || style.position === 'absolute') return;
+                const rect = node.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) {
+                    boxes.push(rect);
+                    return;
+                }
+                Array.from(node.children).forEach(visit);
+                Array.from(node.childNodes).forEach(child => {
+                    if (child.nodeType !== 3 || !child.textContent.trim()) return;
+                    const range = document.createRange();
+                    range.selectNodeContents(child);
+                    Array.from(range.getClientRects()).forEach(box => {
+                        if (box.width > 0 && box.height > 0) boxes.push(box);
+                    });
+                });
+            };
+            visit(element);
+            if (!boxes.length) return own;
+            const top = Math.min(...boxes.map(rect => rect.top));
+            const bottom = Math.max(...boxes.map(rect => rect.bottom));
+            const left = Math.min(...boxes.map(rect => rect.left));
+            const right = Math.max(...boxes.map(rect => rect.right));
+            return { x: left, y: top, top, bottom, left, right, width: right - left, height: bottom - top };
+        } catch {
+            return null;
+        }
+    }
+
+    invalidateTimelineNodes() {
+        this._turnRolesDirty = true;
+    }
+
+    getTimelineStructureSelectors() {
+        return ['[data-turn-id-container]', '[data-turn]', 'h4.sr-only'];
+    }
+
+    getTimelineStructureObserverOptions() {
+        return { characterData: true };
+    }
+
+    getTimelineStructureAttributeFilter() {
+        return ['data-turn-id-container', 'data-is-intersecting', 'data-turn'];
+    }
+
+    async matches(url) {
         return matchesPlatform(url, 'chatgpt');
     }
 
     getUserMessageSelector() {
+        if (this._usesHeadingTurnSelector) return '[data-ait-heading-turn="user"]';
+        if (this._usesVirtualizedTurnSelector) {
+            return '[data-turn-id-container][data-ait-turn="user"]';
+        }
         return '[data-turn="user"][data-turn-id]';
+    }
+
+    getAssistantMessageSelector() {
+        if (this._usesHeadingTurnSelector) return '[data-ait-heading-turn="assistant"]';
+        if (document.querySelector('[data-turn-id-container][data-ait-turn="assistant"]')) {
+            return '[data-turn-id-container][data-ait-turn="assistant"]';
+        }
+        return '[data-turn="assistant"][data-turn-id]';
     }
 
     /**
@@ -32,8 +329,14 @@ class ChatGPTAdapter extends SiteAdapter {
     _extractNodeIdFromDom(element) {
         if (!element) return null;
         
-        const nodeId = element.getAttribute('data-turn-id') || null;
-        return nodeId ? String(nodeId) : null;
+        const nodeId = element.getAttribute('data-turn-id-container')
+            || element.getAttribute('data-turn-id')
+            || null;
+        if (nodeId) return String(nodeId);
+        if (element.getAttribute('data-ait-heading-turn') === 'user') {
+            return this._matchHeadingNodeId(element);
+        }
+        return null;
     }
 
     /**
@@ -96,46 +399,37 @@ class ChatGPTAdapter extends SiteAdapter {
         return null;
     }
 
-    extractText(element) {
-        const textElement = element.querySelector('.whitespace-pre-wrap');
-        const text = (textElement?.textContent || '').replace(/\s+/g, ' ').trim();
-        return text || '[图片或文件]';
+    _cacheTurnText(nodeId, text) {
+        const normalized = String(text || '').trim();
+        if (!nodeId || !normalized) return;
+
+        const maxLength = ChatGPTAdapter.TEXT_CACHE_MAX_TEXT_LENGTH;
+        const trimmed = normalized.length > maxLength
+            ? normalized.slice(0, maxLength)
+            : normalized;
+        if (this._turnTextCache.get(nodeId) === trimmed) return;
+        if (!this._turnTextCache.has(nodeId)
+            && this._turnTextCache.size >= ChatGPTAdapter.TEXT_CACHE_MAX_ENTRIES) {
+            const oldest = this._turnTextCache.keys().next().value;
+            this._turnTextCache.delete(oldest);
+        }
+        this._turnTextCache.set(nodeId, trimmed);
     }
 
-    /**
-     * 通过 MAIN world 的 fiber bridge 同步提取所有用户消息文本
-     * 用于补充/覆盖 DOM 提取（解决虚拟滚动导致的文本丢失问题）
-     *
-     * 通信依赖 DOM 自定义事件在同栈完成（同步往返）：
-     * 1. 注册一次性 `timeline-fiber-result` 监听
-     * 2. 派发 `timeline-extract-fiber` 触发 MAIN-world 桥
-     * 3. dispatchEvent 返回时 cache 已被填充
-     *
-     * 如果桥脚本未就绪（document_idle 未到达 / CSP 拦截 / 非 ChatGPT 域），
-     * 监听不会触发，cache 为空 → 调用方自动回退到 DOM 提取。
-     * 首次检测到桥不可用时打印一条 warn，便于定位「桥根本没接通」。
-     * @returns {Map<string, string>} - data-turn-id → 消息文本
-     */
-    extractFiberTexts() {
-        const cache = new Map();
-        let received = false;
-        const handler = (e) => {
-            received = true;
-            if (e.detail) {
-                Object.entries(e.detail).forEach(([id, txt]) => cache.set(id, txt));
-            }
-        };
-        document.addEventListener('timeline-fiber-result', handler, { once: true });
-        document.dispatchEvent(new CustomEvent('timeline-extract-fiber'));
-        if (!received) {
-            // 同步往返失败 → 桥脚本不可用，移除挂起监听避免内存泄漏
-            document.removeEventListener('timeline-fiber-result', handler);
-            if (!ChatGPTAdapter._bridgeWarned) {
-                ChatGPTAdapter._bridgeWarned = true;
-                console.warn('[ChatGPTAdapter] fiber bridge unavailable, falling back to DOM extraction. Check that fiber-bridge-chatgpt.js is loaded in MAIN world.');
-            }
+    extractText(element) {
+        const nodeId = this._extractNodeIdFromDom(element);
+        const textElement = element.querySelector('.whitespace-pre-wrap');
+        const text = element.hasAttribute('data-ait-heading-turn')
+            ? this._extractHeadingText(element)
+            : (textElement?.textContent || '').replace(/\s+/g, ' ').trim();
+        if (text) {
+            if (nodeId) this._cacheTurnText(nodeId, text);
+            return text;
         }
-        return cache;
+        if (nodeId && this._turnTextCache.has(nodeId)) {
+            return this._turnTextCache.get(nodeId);
+        }
+        return element.childElementCount === 0 ? '[未加载的提问]' : '[图片或文件]';
     }
     
     /**
@@ -170,10 +464,12 @@ class ChatGPTAdapter extends SiteAdapter {
             }
         }
         
-        // 检查分享页面路径: /share/e/{id}
+        // 检查分享页面路径: /share/{id} 或 /share/e/{id}
         const shareIndex = segs.indexOf('share');
-        if (shareIndex !== -1 && segs[shareIndex + 1] === 'e') {
-            const shareId = segs[shareIndex + 2];
+        if (shareIndex !== -1) {
+            const shareId = segs[shareIndex + 1] === 'e'
+                ? segs[shareIndex + 2]
+                : segs[shareIndex + 1];
             if (typeof shareId === 'string' && shareId.length > 0 && /^[A-Za-z0-9_-]+$/.test(shareId)) {
                 return true;
             }
@@ -200,10 +496,12 @@ class ChatGPTAdapter extends SiteAdapter {
                 if (slug && /^[A-Za-z0-9_-]+$/.test(slug)) return slug;
             }
             
-            // 尝试提取分享页面 ID: /share/e/{id}
+            // 尝试提取分享页面 ID: /share/{id} 或 /share/e/{id}
             const shareIndex = segs.indexOf('share');
-            if (shareIndex !== -1 && segs[shareIndex + 1] === 'e') {
-                const shareId = segs[shareIndex + 2];
+            if (shareIndex !== -1) {
+                const shareId = segs[shareIndex + 1] === 'e'
+                    ? segs[shareIndex + 2]
+                    : segs[shareIndex + 1];
                 if (shareId && /^[A-Za-z0-9_-]+$/.test(shareId)) return shareId;
             }
             
@@ -213,7 +511,7 @@ class ChatGPTAdapter extends SiteAdapter {
         }
     }
 
-    findConversationContainer(firstMessage) {
+    findConversationContainer(firstMessage, context = {}) {
         /**
          * 查找对话容器
          * 
@@ -226,17 +524,64 @@ class ChatGPTAdapter extends SiteAdapter {
          * 优势：比传统的向上遍历更精确，避免找到过于外层的容器
          */
         return ContainerFinder.findConversationContainer(firstMessage, {
-            messageSelector: this.getUserMessageSelector()
+            messageSelector: context.messageSelector || this.getUserMessageSelector(),
+            messages: context.userTurnElements
         });
     }
 
     getTimelinePosition() {
-        // ChatGPT 默认位置
+        const defaultRightInset = 16;
+        const nativeTimeline = this.findNativeTimelineContainer();
+        let rightInset = defaultRightInset;
+
+        if (nativeTimeline && typeof window !== 'undefined') {
+            try {
+                const style = window.getComputedStyle(nativeTimeline);
+                const rect = nativeTimeline.getBoundingClientRect();
+                const occupiedFromRight = window.innerWidth - rect.left;
+                const isVisible = style.display !== 'none' &&
+                    style.visibility !== 'hidden' &&
+                    rect.width > 0 &&
+                    rect.height > 0;
+
+                if (
+                    isVisible &&
+                    Number.isFinite(occupiedFromRight) &&
+                    occupiedFromRight > 0 &&
+                    occupiedFromRight < window.innerWidth
+                ) {
+                    // ChatGPT 原生目录固定在右侧；保留 8px 间隔，把扩展时间轴放到它左边。
+                    rightInset = Math.ceil(occupiedFromRight + 8);
+                }
+            } catch {}
+        }
+
         return {
             top: '120px',      // 避开顶部导航栏
-            right: '22px',    // 右侧边距
+            right: `${rightInset}px`,
             bottom: '120px',   // 避开底部输入框
         };
+    }
+
+    /**
+     * ChatGPT 的原生 Prompt 目录没有稳定容器 ID，但目录按钮有稳定的
+     * data-toc-item-index。由按钮向上查找 fixed 容器，避免依赖构建生成的类名。
+     * @returns {Element|null}
+     */
+    findNativeTimelineContainer() {
+        if (typeof document === 'undefined') return null;
+
+        const tocItem = document.querySelector('button[data-toc-item-index]');
+        let current = tocItem?.parentElement || null;
+        while (current && current !== document.body) {
+            try {
+                if (window.getComputedStyle(current).position === 'fixed') {
+                    return current;
+                }
+            } catch {}
+            current = current.parentElement;
+        }
+        return null;
     }
     
     /**
@@ -274,7 +619,8 @@ class ChatGPTAdapter extends SiteAdapter {
     getTimelineVisibilitySelectors() {
         return [
             '.text-token-primary',
-            '[data-stage-thread-flyout="true"][data-testid="stage-thread-flyout"]'
+            '[data-stage-thread-flyout="true"][data-testid="stage-thread-flyout"]',
+            'button[data-toc-item-index]'
         ];
     }
     
@@ -296,5 +642,77 @@ class ChatGPTAdapter extends SiteAdapter {
         const submitButton = document.getElementById('composer-submit-button');
         // ✅ 必须返回 boolean，找不到按钮视为 false（未生成），而不是 null（未实现）
         return !!(submitButton && submitButton.getAttribute('data-testid') === 'stop-button');
+    }
+
+    getImageUploadInputSelector() {
+        return 'input[type="file"]';
+    }
+
+    getComposerSubmitButton() {
+        return document.getElementById('composer-submit-button') ||
+            document.querySelector('#composer-submit-button');
+    }
+
+    getComposerRoot() {
+        const prompt = document.getElementById('prompt-textarea');
+        const submitButton = this.getComposerSubmitButton();
+        return prompt?.closest('form') ||
+            submitButton?.closest('form') ||
+            prompt?.closest('[data-testid*="composer"]') ||
+            submitButton?.parentElement ||
+            document;
+    }
+
+    isImageUploadInProgress() {
+        const root = this.getComposerRoot();
+        if (!root?.querySelector) return false;
+
+        return !!root.querySelector([
+            '[role="progressbar"]',
+            '[aria-busy="true"]',
+            '[aria-label*="Uploading"]',
+            '[aria-label*="uploading"]',
+            '[aria-label*="上传中"]',
+            '[data-testid*="upload-progress"]',
+            '[data-testid*="uploading"]'
+        ].join(','));
+    }
+
+    hasImageUploadAttachment() {
+        const root = this.getComposerRoot();
+        if (!root?.querySelector) return false;
+
+        return !!root.querySelector([
+            '[data-testid*="file-preview"]',
+            '[data-testid*="file-thumbnail"]',
+            '[data-testid*="attachment"]',
+            '[data-testid*="uploaded-file"]',
+            '[data-testid*="image"]',
+            'img[src^="blob:"]',
+            'img[src^="data:image"]',
+            'img[alt*="Uploaded"]',
+            'img[alt*="uploaded"]',
+            'img[alt*="upload"]',
+            'img[alt*="上传"]'
+        ].join(','));
+    }
+
+    isImageUploadReadyToSend() {
+        const submitButton = this.getComposerSubmitButton();
+        if (!submitButton) return false;
+
+        const isStopButton = submitButton.getAttribute('data-testid') === 'stop-button';
+        const isDisabled = submitButton.disabled === true ||
+            submitButton.getAttribute('disabled') !== null ||
+            submitButton.getAttribute('aria-disabled') === 'true';
+
+        return !isStopButton && !isDisabled && !this.isImageUploadInProgress();
+    }
+
+    sendImageUploadMessage() {
+        const submitButton = this.getComposerSubmitButton();
+        if (!submitButton || !this.isImageUploadReadyToSend()) return false;
+        submitButton.click();
+        return true;
     }
 }

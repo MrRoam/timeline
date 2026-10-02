@@ -83,6 +83,9 @@
   "promptAllSettingsTooltip": {
     "message": "การตั้งค่าทั้งหมด"
   },
+  "shareExtension": {
+    "message": "แชร์ส่วนขยาย"
+  },
   "promptCommonSmartInputHint": {
     "message": "ในช่องแชท ให้ตั้งค่าว่าปุ่ม Enter จะควบคุมการขึ้นบรรทัดใหม่และการส่งข้อความอย่างไร"
   },
@@ -102,7 +105,7 @@
     "message": "หาก Timeline มีประโยชน์กับคุณ โปรดสนับสนุนด้วย Star บน GitHub"
   },
   "promptCommonMirrorSiteHint": {
-    "message": "เพิ่มเว็บแชต AI ใหม่เพื่อปลดล็อกฟีเจอร์อย่างไทม์ไลน์และพรอมต์"
+    "message": "ปรับให้รองรับเว็บแชต AI อื่น ๆ เพื่อปลดล็อกไทม์ไลน์ พรอมต์ บันทึกด่วน และฟีเจอร์อื่น ๆ"
   },
   "promptCommonGithubStarButton": {
     "message": "ไปที่ GitHub"
@@ -834,13 +837,13 @@
     "message": "Adapt a new AI platform"
   },
   "mirrorSiteAdapterHeroDesc": {
-    "message": "ไม่พบเว็บไซต์แชต AI ที่คุณใช้อยู่ใช่ไหม? ไม่ว่าจะเป็นเว็บมิเรอร์ AI เว็บแชต AI ภายในบริษัท หรือเว็บ AI เฉพาะกลุ่ม คุณสามารถขอให้รองรับได้ เมื่อปรับให้รองรับแล้ว คุณจะปลดล็อกฟีเจอร์อย่างไทม์ไลน์ พรอมต์ และบันทึกด่วนได้"
+    "message": "เว็บไซต์แชต AI ที่คุณใช้อยู่ยังไม่รองรับใช่ไหม? ไม่ว่าจะเป็นเว็บแชต AI ภายในบริษัท หรือเว็บ AI เฉพาะกลุ่ม คุณสามารถขอให้รองรับได้ เมื่อปรับให้รองรับแล้ว คุณจะปลดล็อกฟีเจอร์อย่างไทม์ไลน์ พรอมต์ และบันทึกด่วนได้"
   },
   "mirrorSiteAdapterStartButton": {
     "message": "Start setup"
   },
   "mirrorSiteNativeSupportedTitle": {
-    "message": "แพลตฟอร์ม AI ที่รองรับแบบเนทีฟ:"
+    "message": "แพลตฟอร์ม AI ที่รองรับแบบเนทีฟและเว็บไซต์มิเรอร์:"
   },
   "mirrorSiteWizardStep1": {
     "message": "Open the AI site you want to adapt and start a new conversation"
@@ -920,6 +923,12 @@
   "timelineAICompleteToastHint": {
     "message": "แสดงการแจ้งเตือนเมื่อ AI ตอบเสร็จและคุณไม่ได้อยู่ที่ตำแหน่งล่าสุด"
   },
+  "preventAutoScrollLabel": {
+    "message": "คงตำแหน่งการอ่านเมื่อส่ง"
+  },
+  "preventAutoScrollHint": {
+    "message": "เมื่อคุณส่งข้อความขณะกำลังดูประวัติก่อนหน้า หน้าจะอยู่ที่ตำแหน่งการอ่านปัจจุบันแทนที่จะเลื่อนลงไปด้านล่าง"
+  },
   "timelineThemeColorLabel": {
     "message": "สีธีมไทม์ไลน์"
   },
@@ -928,5 +937,32 @@
   },
   "timelineThemeColorManageButton": {
     "message": "ตั้งค่า"
+  },
+  "geminiWatermarkTitle": {
+    "message": "ลบลายน้ำ Nano Banana"
+  },
+  "geminiWatermarkHint": {
+    "message": "แสดงตัวเลือกดาวน์โหลดแบบลบลายน้ำบนรูปภาพที่สร้างโดย Gemini เพื่อดาวน์โหลดรูปภาพต้นฉบับหรือรูปภาพที่ลบลายน้ำมุมขวาล่างแล้ว"
+  },
+  "geminiWatermarkDownload": {
+    "message": "ดาวน์โหลดรูปภาพที่ไม่มีลายน้ำ"
+  },
+  "geminiWatermarkDownloadOriginal": {
+    "message": "ดาวน์โหลดรูปภาพต้นฉบับ"
+  },
+  "geminiWatermarkErrorGeneric": {
+    "message": "ลบลายน้ำไม่สำเร็จ"
+  },
+  "geminiWatermarkErrorNoImage": {
+    "message": "Could not find an image to process"
+  },
+  "geminiWatermarkErrorTooSmall": {
+    "message": "Image is too small to remove a watermark"
+  },
+  "geminiWatermarkErrorNoWatermark": {
+    "message": "No Gemini watermark detected on this image"
+  },
+  "geminiWatermarkErrorUnreadable": {
+    "message": "Cannot read image pixels (blocked by browser security). Try downloading the original instead."
   }
 }

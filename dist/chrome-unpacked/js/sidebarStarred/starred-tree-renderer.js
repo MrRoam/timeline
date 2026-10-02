@@ -54,6 +54,9 @@ class StarredTreeRenderer {
         this.folderManager = this.opts.folderManager;
         this._folderDataMap = new Map();
         this._itemDataMap = new Map();
+        this._siteInfoByUrlCache = new Map();
+        this._renderVersion = 0;
+        this._activeRenderList = null;
         this._delegateContainer = null;
         this._delegateHandlers = null;
         this._urlChangeHandler = () => this._refreshActiveState();
@@ -76,9 +79,11 @@ class StarredTreeRenderer {
 
     // ==================== 树渲染 ====================
 
-    renderTree(tree) {
+    async renderTree(tree) {
+        const renderVersion = ++this._renderVersion;
         const list = this.opts.getListContainer();
         if (!list) return;
+        this._activeRenderList = list;
 
         if (this._delegateContainer !== list) {
             this._unbindContainerDelegation();
@@ -102,11 +107,13 @@ class StarredTreeRenderer {
         list.style.display = '';
 
         for (const folder of tree.folders) {
-            this.renderFolder(folder, list);
+            await this.renderFolder(folder, list, 0, renderVersion);
+            if (!this._isRenderCurrent(renderVersion, list)) return;
         }
 
         if (tree.uncategorized.length > 0) {
-            this._renderDefaultFolder(tree.uncategorized, list);
+            await this._renderDefaultFolder(tree.uncategorized, list, renderVersion);
+            if (!this._isRenderCurrent(renderVersion, list)) return;
         }
         const searchQuery = this.opts.showSearch ? this.opts.getSearchQuery() : '';
         if (searchQuery && list.children.length === 0) {
@@ -120,22 +127,25 @@ class StarredTreeRenderer {
         }
     }
 
-    renderFolder(folder, container, level = 0) {
+    async renderFolder(folder, container, level = 0, renderVersion = this._renderVersion) {
+        if (!this._isRenderCurrent(renderVersion)) return;
         const searchQuery = this.opts.showSearch ? this.opts.getSearchQuery() : '';
         const folderStates = this.opts.getFolderStates();
 
-        let filteredItems = folder.items;
+        let filteredItems = folder.items.filter(item => this._isRetainedStarredItem(item));
         let folderNameMatches = false;
 
         if (searchQuery) {
             folderNameMatches = folder.name.toLowerCase().includes(searchQuery);
             filteredItems = folderNameMatches
-                ? folder.items
-                : folder.items.filter(item => this._matchesSearch(item, searchQuery));
+                ? filteredItems
+                : filteredItems.filter(item => this._matchesSearch(item, searchQuery));
 
             const hasMatchingChildren = (folder.children || []).some(child => {
                 const childNameMatches = child.name.toLowerCase().includes(searchQuery);
-                const childHasItems = child.items.some(item => this._matchesSearch(item, searchQuery));
+                const childHasItems = child.items.some(item =>
+                    this._isRetainedStarredItem(item) && this._matchesSearch(item, searchQuery)
+                );
                 return childNameMatches || childHasItems;
             });
 
@@ -193,24 +203,30 @@ class StarredTreeRenderer {
 
         if (folder.children && folder.children.length > 0) {
             for (const child of folder.children) {
-                this.renderFolder(child, content, level + 1);
+                await this.renderFolder(child, content, level + 1, renderVersion);
+                if (!this._isRenderCurrent(renderVersion)) return;
             }
         }
         for (const item of filteredItems) {
-            content.appendChild(this.renderStarredItem(item));
+            const itemEl = await this.renderStarredItem(item, renderVersion);
+            if (!this._isRenderCurrent(renderVersion)) return;
+            if (itemEl) content.appendChild(itemEl);
         }
 
+        if (!this._isRenderCurrent(renderVersion)) return;
         folderEl.appendChild(content);
         container.appendChild(folderEl);
     }
 
-    _renderDefaultFolder(items, container) {
+    async _renderDefaultFolder(items, container, renderVersion = this._renderVersion) {
+        if (!this._isRenderCurrent(renderVersion)) return;
         const searchQuery = this.opts.showSearch ? this.opts.getSearchQuery() : '';
         const folderStates = this.opts.getFolderStates();
 
+        const retainedItems = items.filter(item => this._isRetainedStarredItem(item));
         const filteredItems = searchQuery
-            ? items.filter(item => this._matchesSearch(item, searchQuery))
-            : items;
+            ? retainedItems.filter(item => this._matchesSearch(item, searchQuery))
+            : retainedItems;
 
         if (searchQuery && filteredItems.length === 0) return;
 
@@ -240,14 +256,18 @@ class StarredTreeRenderer {
         content.className = `ait-folder-content ${isExpanded ? 'expanded' : ''}`;
 
         for (const item of filteredItems) {
-            content.appendChild(this.renderStarredItem(item));
+            const itemEl = await this.renderStarredItem(item, renderVersion);
+            if (!this._isRenderCurrent(renderVersion)) return;
+            if (itemEl) content.appendChild(itemEl);
         }
 
+        if (!this._isRenderCurrent(renderVersion)) return;
         folderEl.appendChild(content);
         container.appendChild(folderEl);
     }
 
-    renderStarredItem(item) {
+    async renderStarredItem(item, renderVersion = this._renderVersion) {
+        if (!this._isRenderCurrent(renderVersion)) return null;
         this._itemDataMap.set(item.turnId, item);
 
         const el = document.createElement('div');
@@ -255,17 +275,18 @@ class StarredTreeRenderer {
         el.dataset.turnId = item.turnId;
         el.draggable = true;
 
+        const isNodeLevel = this._isNodeLevelStar(item);
+        if (isNodeLevel) {
+            el.classList.add('ait-star-node');
+        }
+
         if (this._isCurrentPage(item)) {
             el.classList.add('active');
         }
 
-        if (item.turnId?.startsWith('notepad:')) {
-            const logo = document.createElement('div');
-            logo.className = 'timeline-starred-item-logo';
-            logo.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>';
-            el.appendChild(logo);
-        } else if (this.opts.showPlatformIcon) {
-            const siteInfo = getSiteInfoByUrl(item.url);
+        if (this.opts.showPlatformIcon) {
+            const siteInfo = await this._getSiteInfoForUrl(item.url);
+            if (!this._isRenderCurrent(renderVersion)) return null;
             const logo = document.createElement('div');
             logo.className = 'timeline-starred-item-logo';
             if (siteInfo.logo) {
@@ -280,6 +301,13 @@ class StarredTreeRenderer {
                 logo.appendChild(initial);
             }
             el.appendChild(logo);
+        }
+
+        if (isNodeLevel) {
+            const activeMarker = document.createElement('span');
+            activeMarker.className = 'timeline-starred-item-active-marker';
+            activeMarker.innerHTML = '<svg viewBox="0 0 8 10" width="8" height="10" fill="currentColor"><path d="M0 0l8 5-8 5z"/></svg>';
+            el.appendChild(activeMarker);
         }
 
         const name = document.createElement('div');
@@ -304,6 +332,21 @@ class StarredTreeRenderer {
         el.appendChild(actionsWrap);
 
         return el;
+    }
+
+    _isRenderCurrent(renderVersion, list = null) {
+        if (renderVersion !== this._renderVersion) return false;
+        const expectedList = list || this._activeRenderList;
+        if (expectedList && expectedList !== this.opts.getListContainer()) return false;
+        return true;
+    }
+
+    async _getSiteInfoForUrl(url) {
+        const key = String(url || '');
+        if (!this._siteInfoByUrlCache.has(key)) {
+            this._siteInfoByUrlCache.set(key, getSiteInfoByUrl(key));
+        }
+        return this._siteInfoByUrlCache.get(key);
     }
 
     // ==================== 容器级事件委托 ====================
@@ -1036,21 +1079,6 @@ class StarredTreeRenderer {
     // ==================== 点击导航 ====================
 
     async _navigateToItem(item) {
-        if (item.turnId?.startsWith('notepad:')) {
-            const noteId = item.turnId.substring('notepad:'.length);
-            if (window.notepadManager) {
-                await window.notepadManager.open();
-                window.notepadManager.openNote(noteId);
-                requestAnimationFrame(() => {
-                    if (window.notepadManager.panel) {
-                        window.notepadManager.panel.classList.add('ait-notepad-focused');
-                    }
-                });
-            }
-            this.opts.onAfterNavigate();
-            return;
-        }
-
         const url = item.url || `https://${item.urlWithoutProtocol}`;
         const nodeKey = item.nodeId !== undefined ? item.nodeId : item.index;
         const needsScroll = nodeKey !== undefined && nodeKey !== -1;
@@ -1068,10 +1096,7 @@ class StarredTreeRenderer {
             if (needsScroll && window.timelineManager) {
                 await window.timelineManager.setNavigateDataForUrl(url, nodeKey);
             }
-            const adapter = window.sidebarStarredAdapterRegistry?.getAdapter();
-            if (!adapter?.navigateToConversation(url)) {
-                location.href = url;
-            }
+            location.href = url;
             this.opts.onAfterNavigate();
         } else {
             if (needsScroll && window.timelineManager) {
@@ -1107,19 +1132,31 @@ class StarredTreeRenderer {
 
     _isCurrentPage(item) {
         if (!item.urlWithoutProtocol) return false;
-        if (item.turnId?.startsWith('notepad:')) return false;
         const current = location.href.replace(/^https?:\/\//, '');
         return current === item.urlWithoutProtocol;
+    }
+
+    /**
+     * 是否为「提问节点」级别的收藏（区别于页面级收藏）
+     * 页面级收藏的 index/nodeId 为 -1，提问节点为真实的节点标识
+     */
+    _isNodeLevelStar(item) {
+        if (!this._isRetainedStarredItem(item)) return false;
+        const nodeKey = item.nodeId !== undefined ? item.nodeId : item.index;
+        return nodeKey !== undefined && nodeKey !== -1;
     }
 
     // ==================== 生命周期 ====================
 
     destroy() {
+        this._renderVersion++;
         window.removeEventListener('url:change', this._urlChangeHandler);
         this._unbindContainerDelegation();
         this._delegateContainer = null;
+        this._activeRenderList = null;
         this._folderDataMap.clear();
         this._itemDataMap.clear();
+        this._siteInfoByUrlCache.clear();
     }
 
     // ==================== URL 变化 → active 状态 ====================
@@ -1149,6 +1186,10 @@ class StarredTreeRenderer {
     _matchesSearch(item, query) {
         if (!query) return true;
         return item.theme && item.theme.toLowerCase().includes(query);
+    }
+
+    _isRetainedStarredItem(item) {
+        return !item?.turnId?.startsWith('notepad:');
     }
 
     _escapeHtml(text) {

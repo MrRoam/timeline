@@ -83,6 +83,9 @@
   "promptAllSettingsTooltip": {
     "message": "सभी सेटिंग्स"
   },
+  "shareExtension": {
+    "message": "एक्सटेंशन साझा करें"
+  },
   "promptCommonSmartInputHint": {
     "message": "चैट बॉक्स में सेट करें कि Enter कुंजी नई पंक्ति और संदेश भेजने को कैसे नियंत्रित करे"
   },
@@ -102,7 +105,7 @@
     "message": "अगर Timeline आपके लिए उपयोगी है, तो GitHub Star देकर समर्थन करें।"
   },
   "promptCommonMirrorSiteHint": {
-    "message": "नई AI चैट साइट जोड़ें और Timeline व prompts जैसी सुविधाएँ अनलॉक करें।"
+    "message": "अन्य AI चैट साइटों को अनुकूलित करें और Timeline, prompts, flash notes जैसी सुविधाएँ अनलॉक करें।"
   },
   "promptCommonGithubStarButton": {
     "message": "GitHub पर जाएं"
@@ -834,13 +837,13 @@
     "message": "Adapt a new AI platform"
   },
   "mirrorSiteAdapterHeroDesc": {
-    "message": "आप जिस AI चैट साइट का उपयोग करते हैं वह नहीं मिल रही? चाहे वह AI मिरर साइट हो, कंपनी की आंतरिक AI चैट हो, या कोई कम-ज्ञात AI साइट हो — आप अनुकूलन का अनुरोध कर सकते हैं। अनुकूलन के बाद आप “Timeline”, prompts और flash notes जैसी सुविधाएँ अनलॉक कर सकेंगे।"
+    "message": "आप जिस AI चैट साइट का उपयोग करते हैं वह समर्थित नहीं है? चाहे वह कंपनी की आंतरिक AI चैट हो, या कोई कम-ज्ञात AI साइट हो — आप अनुकूलन का अनुरोध कर सकते हैं। अनुकूलन के बाद आप “Timeline”, prompts और flash notes जैसी सुविधाएँ अनलॉक कर सकेंगे।"
   },
   "mirrorSiteAdapterStartButton": {
     "message": "Start setup"
   },
   "mirrorSiteNativeSupportedTitle": {
-    "message": "मूल रूप से समर्थित AI प्लेटफ़ॉर्म:"
+    "message": "मूल रूप से समर्थित AI प्लेटफ़ॉर्म और उनकी मिरर साइटें:"
   },
   "mirrorSiteWizardStep1": {
     "message": "Open the AI site you want to adapt and start a new conversation"
@@ -920,6 +923,12 @@
   "timelineAICompleteToastHint": {
     "message": "जब AI का जवाब पूरा हो जाए और आप नवीनतम स्थिति पर न हों, तो रिमाइंडर दिखाएँ"
   },
+  "preventAutoScrollLabel": {
+    "message": "भेजने पर पढ़ने की स्थिति बनाए रखें"
+  },
+  "preventAutoScrollHint": {
+    "message": "जब आप पुराना इतिहास देखते समय कोई संदेश भेजते हैं, तो पेज सबसे नीचे जाने के बजाय आपकी वर्तमान पढ़ने की स्थिति पर बना रहता है"
+  },
   "timelineThemeColorLabel": {
     "message": "टाइमलाइन थीम रंग"
   },
@@ -928,5 +937,32 @@
   },
   "timelineThemeColorManageButton": {
     "message": "सेट करें"
+  },
+  "geminiWatermarkTitle": {
+    "message": "Nano Banana वॉटरमार्क रिमूवर"
+  },
+  "geminiWatermarkHint": {
+    "message": "Gemini से बनी छवियों पर वॉटरमार्क हटाने वाले डाउनलोड विकल्प दिखाएं, ताकि आप मूल छवि या नीचे दाईं ओर का वॉटरमार्क हटाई गई छवि डाउनलोड कर सकें।"
+  },
+  "geminiWatermarkDownload": {
+    "message": "वॉटरमार्क रहित छवि डाउनलोड करें"
+  },
+  "geminiWatermarkDownloadOriginal": {
+    "message": "मूल छवि डाउनलोड करें"
+  },
+  "geminiWatermarkErrorGeneric": {
+    "message": "वॉटरमार्क हटाने में विफल"
+  },
+  "geminiWatermarkErrorNoImage": {
+    "message": "Could not find an image to process"
+  },
+  "geminiWatermarkErrorTooSmall": {
+    "message": "Image is too small to remove a watermark"
+  },
+  "geminiWatermarkErrorNoWatermark": {
+    "message": "No Gemini watermark detected on this image"
+  },
+  "geminiWatermarkErrorUnreadable": {
+    "message": "Cannot read image pixels (blocked by browser security). Try downloading the original instead."
   }
 }

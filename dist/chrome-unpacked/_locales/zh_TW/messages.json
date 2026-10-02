@@ -83,6 +83,9 @@
   "promptAllSettingsTooltip": {
     "message": "全部設定"
   },
+  "shareExtension": {
+    "message": "分享外掛"
+  },
   "promptCommonSmartInputHint": {
     "message": "在對話框中，設定 Enter 鍵控制「換行」和「傳送訊息」"
   },
@@ -102,7 +105,7 @@
     "message": "如果 Timeline 對你有幫助，歡迎在 GitHub 點 Star 支持。"
   },
   "promptCommonMirrorSiteHint": {
-    "message": "添加新的 AI 對話網站，解鎖時間軸、提示詞等功能。"
+    "message": "適配其他 AI 對話網站，解鎖時間軸、提示詞、閃記等功能。"
   },
   "promptCommonGithubStarButton": {
     "message": "去 GitHub"
@@ -891,13 +894,13 @@
     "message": "適配新的 AI 平台"
   },
   "mirrorSiteAdapterHeroDesc": {
-    "message": "沒找到你在用的 AI 對話網站？比如 AI 鏡像站、公司內部 AI 對話網站、小眾 AI 對話網站，都可申請適配，適配後可解鎖「時間軸、提示詞、閃記」等功能。"
+    "message": "不適配你在用的 AI 對話網站？比如公司內部 AI 對話網站、小眾 AI 對話網站，都可申請適配，適配後可解鎖「時間軸、提示詞、閃記」等功能。"
   },
   "mirrorSiteAdapterStartButton": {
     "message": "開始配置"
   },
   "mirrorSiteNativeSupportedTitle": {
-    "message": "原生支援以下 AI 平台："
+    "message": "原生支援以下 AI 平台及其鏡像站："
   },
   "mirrorSiteWizardStep1": {
     "message": "打開你想適配的 AI 網站，發起一個新對話"
@@ -977,6 +980,12 @@
   "timelineAICompleteToastHint": {
     "message": "AI 回覆完成且目前不在最新位置時顯示提醒"
   },
+  "preventAutoScrollLabel": {
+    "message": "阻止傳送後跳到底部"
+  },
+  "preventAutoScrollHint": {
+    "message": "向上查看歷史時傳送訊息，頁面保持在目前閱讀位置，不跳到底部"
+  },
   "timelineThemeColorLabel": {
     "message": "時間軸主題色"
   },
@@ -985,5 +994,32 @@
   },
   "timelineThemeColorManageButton": {
     "message": "設定"
+  },
+  "geminiWatermarkTitle": {
+    "message": "Nano Banana 去水印"
+  },
+  "geminiWatermarkHint": {
+    "message": "在 Gemini 生成的圖片上顯示去水印下載選項，可下載原圖或去除右下角浮水印後的圖片。"
+  },
+  "geminiWatermarkDownload": {
+    "message": "下載去水印圖片"
+  },
+  "geminiWatermarkDownloadOriginal": {
+    "message": "下載原圖"
+  },
+  "geminiWatermarkErrorGeneric": {
+    "message": "去水印失敗"
+  },
+  "geminiWatermarkErrorNoImage": {
+    "message": "找不到可處理的圖片"
+  },
+  "geminiWatermarkErrorTooSmall": {
+    "message": "圖片尺寸過小，無法去浮水印"
+  },
+  "geminiWatermarkErrorNoWatermark": {
+    "message": "未偵測到 Gemini 浮水印"
+  },
+  "geminiWatermarkErrorUnreadable": {
+    "message": "無法讀取圖片像素（可能被瀏覽器安全政策阻擋），請改為下載原圖"
   }
 }

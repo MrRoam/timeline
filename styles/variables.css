@@ -44,13 +44,12 @@
     
     /* ✅ 紧凑模式（横线样式）变量 */
     --timeline-compact-gap: 12px;              /* 参考 Codex 的紧凑刻度中心距 */
-    --timeline-compact-line-width-long: 14px;  /* 偶数节点：较长的静止刻度 */
-    --timeline-compact-line-width-short: 10px; /* 奇数节点：较短的静止刻度 */
+    --timeline-compact-line-width-long: 14px;  /* 所有问题节点统一使用的静止刻度 */
     --timeline-compact-line-height: 2px;       /* 横线高度 */
     --timeline-line-width-hover: 28px;         /* 光标所在刻度 */
     --timeline-line-width-near: 20px;          /* 紧邻光标的刻度 */
     --timeline-line-width-far: 14px;           /* 距光标两格的刻度 */
-    --timeline-line-width-active: 28px;        /* 当前节点无需悬停也保持清晰可见 */
+    --timeline-line-width-active: 28px;        /* 选中的 Pin 位置无需悬停也保持清晰可见 */
     --timeline-pin-line-width: 10px;           /* Pin 静止时与问题刻度等长 */
     --timeline-pin-line-height: 3px;
     --timeline-pin-line-color: #F5B700;

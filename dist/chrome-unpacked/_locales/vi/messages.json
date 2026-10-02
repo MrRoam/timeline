@@ -83,6 +83,9 @@
   "promptAllSettingsTooltip": {
     "message": "Tất cả cài đặt"
   },
+  "shareExtension": {
+    "message": "Chia sẻ tiện ích"
+  },
   "promptCommonSmartInputHint": {
     "message": "Trong hộp trò chuyện, thiết lập cách phím Enter điều khiển xuống dòng và gửi tin nhắn"
   },
@@ -102,7 +105,7 @@
     "message": "Nếu Timeline hữu ích với bạn, hãy ủng hộ bằng một Star trên GitHub."
   },
   "promptCommonMirrorSiteHint": {
-    "message": "Thêm trang chat AI mới để mở khóa các tính năng như Dòng thời gian và prompt."
+    "message": "Hỗ trợ các trang chat AI khác để mở khóa Dòng thời gian, prompt, ghi chú nhanh và nhiều tính năng khác."
   },
   "promptCommonGithubStarButton": {
     "message": "Đến GitHub"
@@ -834,13 +837,13 @@
     "message": "Adapt a new AI platform"
   },
   "mirrorSiteAdapterHeroDesc": {
-    "message": "Không thấy trang chat AI bạn đang dùng? Dù là trang chat AI mirror, trang chat AI nội bộ công ty hay trang AI ít phổ biến, bạn đều có thể yêu cầu hỗ trợ. Sau khi được điều chỉnh, bạn có thể mở khóa các tính năng như Dòng thời gian, prompt và ghi chú nhanh."
+    "message": "Trang chat AI bạn đang dùng chưa được hỗ trợ? Dù là trang chat AI nội bộ công ty hay trang AI ít phổ biến, bạn đều có thể yêu cầu hỗ trợ. Sau khi được điều chỉnh, bạn có thể mở khóa các tính năng như Dòng thời gian, prompt và ghi chú nhanh."
   },
   "mirrorSiteAdapterStartButton": {
     "message": "Start setup"
   },
   "mirrorSiteNativeSupportedTitle": {
-    "message": "Các nền tảng AI được hỗ trợ nguyên bản:"
+    "message": "Các nền tảng AI được hỗ trợ nguyên bản và các trang mirror của chúng:"
   },
   "mirrorSiteWizardStep1": {
     "message": "Open the AI site you want to adapt and start a new conversation"
@@ -920,6 +923,12 @@
   "timelineAICompleteToastHint": {
     "message": "Hiển thị nhắc nhở khi AI trả lời xong và bạn không ở vị trí mới nhất"
   },
+  "preventAutoScrollLabel": {
+    "message": "Giữ vị trí đọc khi gửi"
+  },
+  "preventAutoScrollHint": {
+    "message": "Khi bạn gửi tin nhắn trong lúc xem lịch sử trước đó, trang sẽ giữ nguyên vị trí đọc hiện tại thay vì nhảy xuống dưới cùng"
+  },
   "timelineThemeColorLabel": {
     "message": "Màu chủ đề dòng thời gian"
   },
@@ -928,5 +937,32 @@
   },
   "timelineThemeColorManageButton": {
     "message": "Thiết lập"
+  },
+  "geminiWatermarkTitle": {
+    "message": "Xóa hình mờ Nano Banana"
+  },
+  "geminiWatermarkHint": {
+    "message": "Hiển thị các tùy chọn tải xuống xóa hình mờ trên ảnh do Gemini tạo, để tải ảnh gốc hoặc ảnh đã xóa hình mờ ở góc dưới bên phải."
+  },
+  "geminiWatermarkDownload": {
+    "message": "Tải ảnh đã xóa hình mờ"
+  },
+  "geminiWatermarkDownloadOriginal": {
+    "message": "Tải ảnh gốc"
+  },
+  "geminiWatermarkErrorGeneric": {
+    "message": "Xóa hình mờ không thành công"
+  },
+  "geminiWatermarkErrorNoImage": {
+    "message": "Không tìm thấy hình ảnh để xử lý"
+  },
+  "geminiWatermarkErrorTooSmall": {
+    "message": "Hình ảnh quá nhỏ, không thể xóa watermark"
+  },
+  "geminiWatermarkErrorNoWatermark": {
+    "message": "Không phát hiện watermark Gemini"
+  },
+  "geminiWatermarkErrorUnreadable": {
+    "message": "Không đọc được pixel (bị chặn bởi bảo mật trình duyệt). Hãy thử tải bản gốc"
   }
 }

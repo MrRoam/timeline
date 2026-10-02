@@ -13,10 +13,12 @@ class ChatGPTAdapter extends SiteAdapter {
         super();
         // ChatGPT 会把视口外轮次虚拟化为空壳；文本只保留在当前对话的内存缓存中。
         this._turnTextCache = new Map();
+        this._capturedMatchTexts = new Map();
         this._capturedTextIds = new Set();
         this._textCacheConvId = null;
         this._turnRolesDirty = true;
         this._usesVirtualizedTurnSelector = false;
+        this._usesHeadingTurnSelector = false;
     }
 
     static TEXT_CACHE_MAX_TEXT_LENGTH = 200;
@@ -35,23 +37,31 @@ class ChatGPTAdapter extends SiteAdapter {
                 received = null;
             }
         };
-        document.addEventListener('ait-gpt-user-texts-result', handler, { once: true });
-        document.dispatchEvent(new CustomEvent('ait-gpt-user-texts-pull', {
-            detail: conversationId
-        }));
-        document.removeEventListener('ait-gpt-user-texts-result', handler);
+        try {
+            document.addEventListener('ait-gpt-user-texts-result', handler);
+            document.dispatchEvent(new CustomEvent('ait-gpt-user-texts-pull', {
+                detail: conversationId
+            }));
+        } catch {
+            return 0;
+        } finally {
+            document.removeEventListener('ait-gpt-user-texts-result', handler);
+        }
 
         const texts = received?.texts;
-        if (!texts) return 0;
+        if (!texts || typeof texts !== 'object' || Array.isArray(texts)) return 0;
 
-        const nextCapturedTextIds = new Set(Object.keys(texts));
+        this._capturedMatchTexts = new Map(
+            Object.entries(texts).filter(([, text]) => typeof text === 'string')
+        );
+        const nextCapturedTextIds = new Set(this._capturedMatchTexts.keys());
         let changedCount = 0;
         this._capturedTextIds.forEach(id => {
             if (!nextCapturedTextIds.has(id) && this._turnTextCache.delete(id)) {
                 changedCount++;
             }
         });
-        Object.entries(texts).forEach(([id, text]) => {
+        this._capturedMatchTexts.forEach((text, id) => {
             const previous = this._turnTextCache.get(id);
             this._cacheTurnText(id, text);
             if (this._turnTextCache.get(id) !== previous) changedCount++;
@@ -62,11 +72,15 @@ class ChatGPTAdapter extends SiteAdapter {
 
     syncCapturedChatsData() {
         const conversationId = this.extractConversationId(location.pathname);
-        if (conversationId === this._textCacheConvId) return;
-
-        this._textCacheConvId = conversationId;
-        this._turnTextCache.clear();
-        this._capturedTextIds.clear();
+        if (conversationId !== this._textCacheConvId) {
+            this._textCacheConvId = conversationId;
+            this._turnTextCache.clear();
+            this._capturedTextIds.clear();
+            this._capturedMatchTexts.clear();
+        } else if (this._capturedTextIds.size > 0) {
+            return;
+        }
+        // 接口可能在实例销毁与重建之间返回；空缓存允许在下一次渲染时重试。
         this._pullConvTexts(conversationId);
     }
 
@@ -78,6 +92,7 @@ class ChatGPTAdapter extends SiteAdapter {
             this._textCacheConvId = conversationId;
             this._turnTextCache.clear();
             this._capturedTextIds.clear();
+            this._capturedMatchTexts.clear();
         }
         return this._pullConvTexts(conversationId);
     }
@@ -88,7 +103,11 @@ class ChatGPTAdapter extends SiteAdapter {
         const handler = (event) => {
             const conversationId = typeof event.detail === 'string' ? event.detail : '';
             const changedCount = this.handleCapturedChatsDataUpdated(conversationId);
-            if (changedCount > 0) callback({ conversationId, changedCount });
+            if (changedCount > 0) callback({
+                conversationId,
+                changedCount,
+                rebuildMarkers: this._usesHeadingTurnSelector
+            });
         };
         document.addEventListener('ait-gpt-user-texts-updated', handler);
         return () => document.removeEventListener('ait-gpt-user-texts-updated', handler);
@@ -159,8 +178,108 @@ class ChatGPTAdapter extends SiteAdapter {
         const hasVirtualizedTurns = this._markTurnRoles();
         this._usesVirtualizedTurnSelector = hasVirtualizedTurns
             && document.querySelector('[data-turn-id-container][data-ait-turn="user"]') !== null;
+        this._usesHeadingTurnSelector = !this._usesVirtualizedTurnSelector
+            && !document.querySelector('[data-turn="user"][data-turn-id]')
+            && this._markHeadingTurns();
         this._turnRolesDirty = false;
         return true;
+    }
+
+    /** 2026-09 新 UI 以无障碍角色标题分隔消息，旧结构仍优先。 */
+    _markHeadingTurns() {
+        const main = document.querySelector('main');
+        if (!main) return false;
+        const candidates = new Map();
+        const roles = new Map();
+        for (const heading of main.querySelectorAll('h4.sr-only')) {
+            const label = (heading.textContent || '').replace(/\s+/g, ' ').trim()
+                .replace(/[:：]$/, '').trim().toLowerCase();
+            const role = ['you said', 'you', '你说', '你說'].includes(label) ? 'user'
+                : ['chatgpt said', 'chatgpt', 'assistant', 'chatgpt 说', 'chatgpt 說'].includes(label)
+                    ? 'assistant' : null;
+            if (!role || heading.closest('form, nav, aside, pre, code, .markdown, [role="dialog"]')) continue;
+            roles.set(heading, role);
+        }
+        for (const [heading, role] of roles) {
+            let container = heading.parentElement;
+            while (container && container !== main && !container.matches('form, nav, aside')) {
+                if (Array.from(container.querySelectorAll('h4.sr-only')).filter(node => roles.has(node)).length !== 1) break;
+                if (Array.from(container.children).some(child => child !== heading && !child.contains(heading))) {
+                    candidates.set(container, role);
+                    break;
+                }
+                container = container.parentElement;
+            }
+        }
+        document.querySelectorAll('[data-ait-heading-turn]').forEach(element => {
+            if (!candidates.has(element)) element.removeAttribute('data-ait-heading-turn');
+        });
+        candidates.forEach((role, element) => {
+            if (element.getAttribute('data-ait-heading-turn') !== role) {
+                element.setAttribute('data-ait-heading-turn', role);
+            }
+        });
+        return Array.from(candidates.values()).includes('user');
+    }
+
+    _extractHeadingText(element) {
+        const content = element.querySelector('.whitespace-pre-wrap');
+        if (content) return (content.textContent || '').replace(/\s+/g, ' ').trim();
+        const copy = element.cloneNode(true);
+        copy.querySelectorAll('h4.sr-only, .sr-only, button, nav, script, style, [hidden], [aria-hidden="true"], [data-ait-time], .ait-time-label')
+            .forEach(node => node.remove());
+        return (copy.textContent || '').replace(/\s+/g, ' ').trim();
+    }
+
+    _matchHeadingNodeId(element) {
+        const text = this._extractHeadingText(element);
+        if (!text) return null;
+        const matches = Array.from(this._capturedMatchTexts).filter(([, value]) =>
+            value.replace(/\s+/g, ' ').trim() === text
+        );
+        if (matches.length !== 1) return null;
+        const peers = Array.from(document.querySelectorAll('[data-ait-heading-turn="user"]'));
+        // API 与 DOM 的全文均唯一时才关联 ID，避免重复提问跳到错误位置。
+        if (peers.filter(peer => this._extractHeadingText(peer) === text).length !== 1) return null;
+        return matches[0][0];
+    }
+
+    getTimelineMessageRect(element) {
+        if (!element?.hasAttribute('data-ait-heading-turn')) return null;
+        try {
+            const own = element.getBoundingClientRect();
+            if (own.width > 0 && own.height > 0) return own;
+            const boxes = [];
+            const visit = node => {
+                if (node.matches('h4.sr-only, .sr-only, button, nav, script, style, [hidden], [aria-hidden="true"], [data-ait-time], .ait-time-label')) return;
+                const style = window.getComputedStyle(node);
+                if (style.display === 'none' || style.visibility === 'hidden'
+                    || style.position === 'fixed' || style.position === 'absolute') return;
+                const rect = node.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) {
+                    boxes.push(rect);
+                    return;
+                }
+                Array.from(node.children).forEach(visit);
+                Array.from(node.childNodes).forEach(child => {
+                    if (child.nodeType !== 3 || !child.textContent.trim()) return;
+                    const range = document.createRange();
+                    range.selectNodeContents(child);
+                    Array.from(range.getClientRects()).forEach(box => {
+                        if (box.width > 0 && box.height > 0) boxes.push(box);
+                    });
+                });
+            };
+            visit(element);
+            if (!boxes.length) return own;
+            const top = Math.min(...boxes.map(rect => rect.top));
+            const bottom = Math.max(...boxes.map(rect => rect.bottom));
+            const left = Math.min(...boxes.map(rect => rect.left));
+            const right = Math.max(...boxes.map(rect => rect.right));
+            return { x: left, y: top, top, bottom, left, right, width: right - left, height: bottom - top };
+        } catch {
+            return null;
+        }
     }
 
     invalidateTimelineNodes() {
@@ -168,7 +287,11 @@ class ChatGPTAdapter extends SiteAdapter {
     }
 
     getTimelineStructureSelectors() {
-        return ['[data-turn-id-container]', '[data-turn]'];
+        return ['[data-turn-id-container]', '[data-turn]', 'h4.sr-only'];
+    }
+
+    getTimelineStructureObserverOptions() {
+        return { characterData: true };
     }
 
     getTimelineStructureAttributeFilter() {
@@ -180,6 +303,7 @@ class ChatGPTAdapter extends SiteAdapter {
     }
 
     getUserMessageSelector() {
+        if (this._usesHeadingTurnSelector) return '[data-ait-heading-turn="user"]';
         if (this._usesVirtualizedTurnSelector) {
             return '[data-turn-id-container][data-ait-turn="user"]';
         }
@@ -187,6 +311,7 @@ class ChatGPTAdapter extends SiteAdapter {
     }
 
     getAssistantMessageSelector() {
+        if (this._usesHeadingTurnSelector) return '[data-ait-heading-turn="assistant"]';
         if (document.querySelector('[data-turn-id-container][data-ait-turn="assistant"]')) {
             return '[data-turn-id-container][data-ait-turn="assistant"]';
         }
@@ -207,7 +332,11 @@ class ChatGPTAdapter extends SiteAdapter {
         const nodeId = element.getAttribute('data-turn-id-container')
             || element.getAttribute('data-turn-id')
             || null;
-        return nodeId ? String(nodeId) : null;
+        if (nodeId) return String(nodeId);
+        if (element.getAttribute('data-ait-heading-turn') === 'user') {
+            return this._matchHeadingNodeId(element);
+        }
+        return null;
     }
 
     /**
@@ -290,7 +419,9 @@ class ChatGPTAdapter extends SiteAdapter {
     extractText(element) {
         const nodeId = this._extractNodeIdFromDom(element);
         const textElement = element.querySelector('.whitespace-pre-wrap');
-        const text = (textElement?.textContent || '').replace(/\s+/g, ' ').trim();
+        const text = element.hasAttribute('data-ait-heading-turn')
+            ? this._extractHeadingText(element)
+            : (textElement?.textContent || '').replace(/\s+/g, ' ').trim();
         if (text) {
             if (nodeId) this._cacheTurnText(nodeId, text);
             return text;

@@ -77,6 +77,9 @@
   "promptAllSettingsTooltip": {
     "message": "全部设置"
   },
+  "shareExtension": {
+    "message": "分享插件"
+  },
   "promptCommonSmartInputHint": {
     "message": "对话框，设置 Enter 键控制「换行」和「发送消息」"
   },
@@ -96,7 +99,7 @@
     "message": "如果 Timeline 对你有帮助，欢迎在 GitHub 点 Star 支持。"
   },
   "promptCommonMirrorSiteHint": {
-    "message": "添加新的 AI 对话网站，解锁时间轴、提示词等功能。"
+    "message": "适配其他 AI 对话网站，解锁时间轴、提示词、闪记等功能。"
   },
   "promptCommonGithubStarButton": {
     "message": "去 GitHub"
@@ -927,13 +930,13 @@
     "message": "适配新的 AI 平台"
   },
   "mirrorSiteAdapterHeroDesc": {
-    "message": "没找到你在用的 AI 对话网站？比如 AI 镜像站、公司内部 AI 对话网站、小众 AI 对话网站，都可申请适配，适配后可解锁「时间轴、提示词、闪记」等功能。"
+    "message": "不适配你在用的 AI 对话网站？比如公司内部 AI 对话网站、小众 AI 对话网站，都可申请适配，适配后可解锁「时间轴、提示词、闪记」等功能。"
   },
   "mirrorSiteAdapterStartButton": {
     "message": "开始配置"
   },
   "mirrorSiteNativeSupportedTitle": {
-    "message": "原生支持以下 AI 平台："
+    "message": "原生支持以下 AI 平台及它们的镜像站："
   },
   "mirrorSiteWizardStep1": {
     "message": "打开你想适配的 AI 网站，发起一个新对话"
@@ -1013,6 +1016,12 @@
   "timelineAICompleteToastHint": {
     "message": "AI 回复完成且当前不在最新位置时显示提醒"
   },
+  "preventAutoScrollLabel": {
+    "message": "阻止发送后跳到底部"
+  },
+  "preventAutoScrollHint": {
+    "message": "向上查看历史时发送消息，页面保持在当前阅读位置，不跳到底部"
+  },
   "timelineThemeColorLabel": {
     "message": "时间轴主题色"
   },
@@ -1022,6 +1031,33 @@
   "timelineThemeColorManageButton": {
     "message": "设置"
   },
+  "geminiWatermarkTitle": {
+    "message": "Nano Banana 去水印"
+  },
+  "geminiWatermarkHint": {
+    "message": "在 Gemini 生成的图片上显示去水印下载选项，可下载原图或去除右下角水印后的图片。"
+  },
+  "geminiWatermarkDownload": {
+    "message": "下载去水印图片"
+  },
+  "geminiWatermarkDownloadOriginal": {
+    "message": "下载原图"
+  },
+  "geminiWatermarkErrorGeneric": {
+    "message": "去水印失败"
+  },
+  "geminiWatermarkErrorNoImage": {
+    "message": "未找到可处理的图片"
+  },
+  "geminiWatermarkErrorTooSmall": {
+    "message": "图片尺寸过小，无法去水印"
+  },
+  "geminiWatermarkErrorNoWatermark": {
+    "message": "未检测到 Gemini 水印"
+  },
+  "geminiWatermarkErrorUnreadable": {
+    "message": "无法读取图片像素（可能被浏览器安全策略拦截），请尝试下载原图"
+  },
   "pinChatAction": {
     "message": "固定位置"
   },
@@ -1030,5 +1066,8 @@
   },
   "returnToPinnedAnswer": {
     "message": "回到固定位置"
+  },
+  "useNewReturnPoint": {
+    "message": "使用这个新返回点"
   }
 }

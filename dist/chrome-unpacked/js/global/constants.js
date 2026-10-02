@@ -272,15 +272,144 @@ const SITE_INFO = [
     }
 ];
 
+const MIRROR_SITE_STORAGE_KEY = 'mirrorSiteSourceDomain';
+
+/**
+ * 镜像站域名内存缓存。
+ * getSiteInfoList() 是高频调用（matchesPlatform / getCurrentPlatform 等都会触发），
+ * 这里用 memo 避免每次都打一次 storage；通过 chrome.storage.onChanged 失效重填。
+ */
+let _mirrorSiteSourceDomainCache = null;
+let _mirrorSiteSourceDomainPromise = null;
+
+function _attachMirrorSiteStorageListener() {
+    if (typeof chrome === 'undefined' || !chrome.storage?.onChanged) return;
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName !== 'local' || !changes[MIRROR_SITE_STORAGE_KEY]) return;
+        const newValue = changes[MIRROR_SITE_STORAGE_KEY].newValue;
+        _mirrorSiteSourceDomainCache = (newValue && typeof newValue === 'object') ? newValue : {};
+        _mirrorSiteSourceDomainPromise = null;
+    });
+}
+_attachMirrorSiteStorageListener();
+
+// 预热缓存：让同步访问（getSiteInfoListSync / matchesCurrentPlatformSync 等）尽快拿到镜像域名。
+if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+    getMirrorSiteSourceDomain().catch(() => {});
+}
+
+/**
+ * 从 storage 读取镜像站域名（带内存缓存）。
+ * 结构：{ chatgpt: ['mirror.example.com'], gemini: [...] }
+ * @returns {Promise<Object>}
+ */
+async function getMirrorSiteSourceDomain() {
+    if (_mirrorSiteSourceDomainCache) return _mirrorSiteSourceDomainCache;
+    if (typeof chrome === 'undefined' || !chrome.storage?.local) return {};
+
+    // 复用同一次进行中的读取，避免并发调用打多次 storage
+    if (!_mirrorSiteSourceDomainPromise) {
+        _mirrorSiteSourceDomainPromise = (async () => {
+            try {
+                const result = await chrome.storage.local.get(MIRROR_SITE_STORAGE_KEY);
+                const value = result?.[MIRROR_SITE_STORAGE_KEY];
+                _mirrorSiteSourceDomainCache = value && typeof value === 'object' ? value : {};
+            } catch {
+                _mirrorSiteSourceDomainCache = {};
+            }
+            return _mirrorSiteSourceDomainCache;
+        })();
+    }
+    return _mirrorSiteSourceDomainPromise;
+}
+
+/**
+ * 读取内置 AI 平台配置（含已检测到的镜像站域名）。
+ * @returns {Promise<Array>} 平台配置列表
+ */
+async function getSiteInfoList() {
+    const NEW_SITE_INFO = JSON.parse(JSON.stringify(SITE_INFO));
+    const mirrorSiteSourceDomain = await getMirrorSiteSourceDomain();
+
+    for (const platform of NEW_SITE_INFO) {
+        const domains = Array.isArray(mirrorSiteSourceDomain[platform.id])
+            ? mirrorSiteSourceDomain[platform.id]
+            : [];
+        for (const domain of domains) {
+            if (typeof domain !== 'string' || !domain.trim()) continue;
+            // 去重，防止域名重复推入
+            if (!platform.sites.includes(domain)) {
+                platform.sites.push(domain);
+            }
+        }
+    }
+
+    return NEW_SITE_INFO;
+}
+
+/**
+ * 同步读取镜像站域名缓存（仅内存，不读 storage）。
+ * 供必须同步执行的渲染路径使用；缓存未就绪时返回 {}。
+ * @returns {Object}
+ */
+function getMirrorSiteSourceDomainSync() {
+    return _mirrorSiteSourceDomainCache || {};
+}
+
+/**
+ * getSiteInfoList 的同步版本：基于内存缓存合并镜像域名，不读 storage。
+ * 缓存未就绪时退化为内置 SITE_INFO（不含镜像域名）。
+ * @returns {Array} 平台配置列表
+ */
+function getSiteInfoListSync() {
+    const list = JSON.parse(JSON.stringify(SITE_INFO));
+    const mirrorSiteSourceDomain = getMirrorSiteSourceDomainSync();
+
+    for (const platform of list) {
+        const domains = Array.isArray(mirrorSiteSourceDomain[platform.id])
+            ? mirrorSiteSourceDomain[platform.id]
+            : [];
+        for (const domain of domains) {
+            if (typeof domain !== 'string' || !domain.trim()) continue;
+            if (!platform.sites.includes(domain)) {
+                platform.sites.push(domain);
+            }
+        }
+    }
+
+    return list;
+}
+
+/**
+ * matchesPlatform 的同步版本（含镜像域名，依赖内存缓存）。
+ * @param {string} url - URL 字符串
+ * @param {string} platformId - 平台 ID
+ * @returns {boolean}
+ */
+function matchesPlatformSync(url, platformId) {
+    const platform = getSiteInfoListSync().find(p => p.id === platformId);
+    if (!platform) return false;
+    return platform.sites.some(site => url.includes(site));
+}
+
+/**
+ * matchesCurrentPlatform 的同步版本（含镜像域名，依赖内存缓存）。
+ * @param {string} platformId - 平台 ID
+ * @returns {boolean}
+ */
+function matchesCurrentPlatformSync(platformId) {
+    return matchesPlatformSync(location.href, platformId);
+}
+
 /**
  * 获取完整的 siteNameMap
  * 将数组结构的 SITE_INFO 转换为域名映射对象，并将 logoPath 转换为完整的 chrome.runtime URL
  * 
- * @returns {Object} 域名到平台信息的映射对象，格式：{ 'domain': { id, name, logo } }
+ * @returns {Promise<Object>} 域名到平台信息的映射对象，格式：{ 'domain': { id, name, logo } }
  */
-function getSiteNameMap() {
+async function getSiteNameMap() {
     const map = {};
-    for (const platform of SITE_INFO) {
+    for (const platform of await getSiteInfoList()) {
         const info = {
             id: platform.id,
             name: platform.name,
@@ -299,15 +428,15 @@ function getSiteNameMap() {
  * 使用 includes 匹配，支持 www 等前缀
  * 
  * @param {string} url - 网站 URL
- * @returns {Object} { id, name, logo }
+ * @returns {Promise<Object>} { id, name, logo }
  */
-function getSiteInfoByUrl(url) {
+async function getSiteInfoByUrl(url) {
     try {
         const urlObj = new URL(url);
         const hostname = urlObj.hostname;
         
         // 遍历所有平台，使用 includes 匹配
-        for (const platform of SITE_INFO) {
+        for (const platform of await getSiteInfoList()) {
             for (const site of platform.sites) {
                 if (hostname.includes(site)) {
                     return {
@@ -330,10 +459,10 @@ function getSiteInfoByUrl(url) {
  * 检查 URL 是否匹配某个平台
  * @param {string} url - URL 字符串
  * @param {string} platformId - 平台 ID
- * @returns {boolean}
+ * @returns {Promise<boolean>}
  */
-function matchesPlatform(url, platformId) {
-    const platform = SITE_INFO.find(p => p.id === platformId);
+async function matchesPlatform(url, platformId) {
+    const platform = (await getSiteInfoList()).find(p => p.id === platformId);
     if (!platform) return false;
     
     return platform.sites.some(site => url.includes(site));
@@ -342,19 +471,19 @@ function matchesPlatform(url, platformId) {
 /**
  * 检查当前页面是否匹配某个平台
  * @param {string} platformId - 平台 ID
- * @returns {boolean}
+ * @returns {Promise<boolean>}
  */
-function matchesCurrentPlatform(platformId) {
+async function matchesCurrentPlatform(platformId) {
     return matchesPlatform(location.href, platformId);
 }
 
 /**
  * 根据 URL 获取匹配的平台信息
  * @param {string} url - URL 字符串
- * @returns {Object|null} 平台信息 { id, sites, name, logoPath, features }
+ * @returns {Promise<Object|null>} 平台信息 { id, sites, name, logoPath, features }
  */
-function getPlatformByUrl(url) {
-    for (const platform of SITE_INFO) {
+async function getPlatformByUrl(url) {
+    for (const platform of await getSiteInfoList()) {
         for (const site of platform.sites) {
             if (url.includes(site)) {
                 return platform;
@@ -382,29 +511,39 @@ function getPlatformByUrl(url) {
 
 /**
  * 获取当前页面的平台信息
- * @returns {Object|null} 平台信息 { id, sites, name, logoPath, features }
+ * @returns {Promise<Object|null>} 平台信息 { id, sites, name, logoPath, features }
  */
-function getCurrentPlatform() {
+async function getCurrentPlatform() {
     return getPlatformByUrl(location.href);
+}
+
+/**
+ * 根据平台 ID 获取平台信息
+ * @param {string} platformId - 平台 ID
+ * @returns {Promise<Object|null>} 平台信息 { id, sites, name, logoPath, features }
+ */
+async function getPlatformById(platformId) {
+    if (!platformId) return null;
+    return (await getSiteInfoList()).find(platform => platform.id === platformId) || null;
 }
 
 /**
  * 获取支持某功能的平台列表
  * @param {string} feature - 功能名：'timeline' | 'promptButton'
- * @returns {Array} 支持该功能的平台列表
+ * @returns {Promise<Array>} 支持该功能的平台列表
  */
-function getPlatformsByFeature(feature) {
-    return SITE_INFO.filter(platform => platform.features?.[feature] === true);
+async function getPlatformsByFeature(feature) {
+    return (await getSiteInfoList()).filter(platform => platform.features?.[feature] === true);
 }
 
 /**
  * 检查平台是否支持某功能
  * @param {string} platformId - 平台 ID
  * @param {string} feature - 功能名
- * @returns {boolean}
+ * @returns {Promise<boolean>}
  */
-function platformSupportsFeature(platformId, feature) {
-    const platform = SITE_INFO.find(p => p.id === platformId);
+async function platformSupportsFeature(platformId, feature) {
+    const platform = (await getSiteInfoList()).find(p => p.id === platformId);
     return platform?.features?.[feature] === true;
 }
 
@@ -463,102 +602,6 @@ function resolveTimelineActiveColor(platformId, activeColorSettings = {}) {
         getTimelineActiveColorOption(TIMELINE_ACTIVE_COLOR_DEFAULT_BY_PLATFORM.default)?.color ||
         '#6128FF';
 }
-
-// ==================== 代码运行器语言配置 ====================
-
-/**
- * 支持的编程语言配置
- * 用于代码运行器（Runner）模块
- * 
- * @property {string} id - 语言标识符
- * @property {string} name - 显示名称
- * @property {string} mode - CodeMirror 语法模式
- * @property {string} storageKey - 存储开关状态的 key
- */
-const RUNNER_LANGUAGES = [
-    { id: 'javascript', name: 'JavaScript', mode: 'javascript', storageKey: 'runnerJsEnabled', runnerClass: 'JavaScriptRunner', hljsLang: 'javascript' },
-    { id: 'typescript', name: 'TypeScript', mode: 'javascript', storageKey: 'runnerTypeScriptEnabled', runnerClass: 'TypeScriptRunner', hljsLang: 'typescript' },
-    { id: 'sql', name: 'SQL', mode: 'sql', storageKey: 'runnerSQLEnabled', runnerClass: 'SQLRunner', hljsLang: 'sql' },
-    { id: 'html', name: 'HTML', mode: 'htmlmixed', storageKey: 'runnerHtmlEnabled', runnerClass: 'HtmlRunner', hljsLang: 'xml' },
-    { id: 'json', name: 'JSON', mode: 'javascript', storageKey: 'runnerJsonEnabled', runnerClass: 'JsonRunner', hljsLang: 'json' },
-    { id: 'markdown', name: 'Markdown', mode: 'markdown', storageKey: 'runnerMarkdownEnabled', runnerClass: 'MarkdownRunner', hljsLang: 'markdown' },
-    { id: 'mermaid', name: 'Mermaid', mode: 'markdown', storageKey: 'mermaidRendererEnabled', runnerClass: 'MermaidRunner', hljsLang: null }
-];
-
-/**
- * 获取 Highlight.js 使用的语言列表
- * @returns {Array<string>}
- */
-function getHljsLanguages() {
-    return RUNNER_LANGUAGES.map(l => l.hljsLang);
-}
-
-/**
- * 获取支持的语言 ID 列表
- * @returns {Array<string>}
- */
-function getSupportedLanguageIds() {
-    return RUNNER_LANGUAGES.map(l => l.id);
-}
-
-/**
- * 将 Highlight.js 语言名称映射到我们的语言 ID
- * @param {string} hljsLang - Highlight.js 语言名称
- * @returns {string|null}
- */
-function mapHljsLangToId(hljsLang) {
-    const lang = RUNNER_LANGUAGES.find(l => l.hljsLang === hljsLang);
-    return lang ? lang.id : null;
-}
-
-/**
- * 根据语言 ID 获取语言配置
- * @param {string} langId - 语言 ID
- * @returns {Object|null}
- */
-function getRunnerLanguageById(langId) {
-    return RUNNER_LANGUAGES.find(l => l.id === langId) || null;
-}
-
-/**
- * 获取语言显示名称
- * @param {string} langId - 语言 ID
- * @returns {string}
- */
-function getRunnerLanguageName(langId) {
-    const lang = RUNNER_LANGUAGES.find(l => l.id === langId);
-    return lang ? lang.name : langId;
-}
-
-// ==================== 文本高亮默认颜色 ====================
-
-/**
- * 文本高亮功能的默认颜色列表
- * 用于 HighlightTab（设置面板）、Highlight Popover（浮窗）、HighlightManager（标注引擎）
- */
-const HIGHLIGHT_DEFAULT_COLORS = ['#F6E26B', '#FC7D9F', '#6BD66B', '#68B5FB', '#C59CF6'];
-
-// ==================== LaTeX 公式格式配置 ====================
-
-/**
- * LaTeX 公式复制格式配置
- * 用于 Formula Tab 模块
- * 
- * @property {string} id - 格式标识符（用于存储）
- * @property {string} label - 显示标签（LaTeX 格式本身是国际通用的，无需 i18n）
- * @property {string} template - 格式模板（%s 为公式占位符）
- */
-const FORMULA_FORMATS = [
-    { id: 'none', label: chrome.i18n.getMessage('formulaFormatNone') || '无特殊附加', template: '%s' },
-    { id: 'dollar', label: '$ ... $', template: '$%s$' },
-    { id: 'doubleDollar', label: '$$ ... $$', template: '$$%s$$' },
-    { id: 'paren', label: '\\( ... \\)', template: '\\(%s\\)' },
-    { id: 'bracket', label: '\\[ ... \\]', template: '\\[%s\\]' },
-    { id: 'equation', label: '\\begin{equation} ... \\end{equation}', template: '\\begin{equation}%s\\end{equation}' },
-    { id: 'equationStar', label: '\\begin{equation*} ... \\end{equation*}', template: '\\begin{equation*}%s\\end{equation*}' },
-    { id: 'align', label: '\\begin{align} ... \\end{align}', template: '\\begin{align}%s\\end{align}' },
-    { id: 'alignStar', label: '\\begin{align*} ... \\end{align*}', template: '\\begin{align*}%s\\end{align*}' }
-];
 
 // ==================== 深色模式检测 ====================
 

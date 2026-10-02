@@ -83,6 +83,9 @@
   "promptAllSettingsTooltip": {
     "message": "すべての設定"
   },
+  "shareExtension": {
+    "message": "拡張機能を共有"
+  },
   "promptCommonSmartInputHint": {
     "message": "チャットボックスで、Enter キーによる「改行」と「メッセージ送信」の操作を設定します"
   },
@@ -102,7 +105,7 @@
     "message": "Timeline が役に立ったら、GitHub で Star をお願いします。"
   },
   "promptCommonMirrorSiteHint": {
-    "message": "新しい AI チャットサイトを追加して、タイムラインやプロンプトなどの機能を解放します。"
+    "message": "他のAIチャットサイトに対応し、タイムライン、プロンプト、フラッシュメモなどの機能を解放します。"
   },
   "promptCommonGithubStarButton": {
     "message": "GitHub へ"
@@ -885,13 +888,13 @@
     "message": "Adapt a new AI platform"
   },
   "mirrorSiteAdapterHeroDesc": {
-    "message": "使っているAIチャットサイトが見つかりませんか？AIミラーサイト、社内のAIチャット、ニッチなAIサイトなど、いずれも対応を申請できます。対応後は「タイムライン」「プロンプト」「フラッシュメモ」などの機能を使えるようになります。"
+    "message": "使っているAIチャットサイトが対応していませんか？社内のAIチャット、ニッチなAIサイトなど、いずれも対応を申請できます。対応後は「タイムライン」「プロンプト」「フラッシュメモ」などの機能を使えるようになります。"
   },
   "mirrorSiteAdapterStartButton": {
     "message": "Start setup"
   },
   "mirrorSiteNativeSupportedTitle": {
-    "message": "ネイティブ対応AIプラットフォーム:"
+    "message": "ネイティブ対応AIプラットフォームとそのミラーサイト:"
   },
   "mirrorSiteWizardStep1": {
     "message": "Open the AI site you want to adapt and start a new conversation"
@@ -971,6 +974,12 @@
   "timelineAICompleteToastHint": {
     "message": "AI の返信が完了し、最新位置にいないときに通知を表示します"
   },
+  "preventAutoScrollLabel": {
+    "message": "送信時に読書位置を維持"
+  },
+  "preventAutoScrollHint": {
+    "message": "過去の履歴を見ているときにメッセージを送信しても、ページは一番下へ移動せず現在の読書位置を保ちます"
+  },
   "timelineThemeColorLabel": {
     "message": "タイムラインのテーマカラー"
   },
@@ -979,5 +988,32 @@
   },
   "timelineThemeColorManageButton": {
     "message": "設定"
+  },
+  "geminiWatermarkTitle": {
+    "message": "Nano Banana 透かし削除"
+  },
+  "geminiWatermarkHint": {
+    "message": "Gemini で生成された画像に透かし削除のダウンロードオプションを表示し、元画像または右下の透かしを削除した画像をダウンロードできます。"
+  },
+  "geminiWatermarkDownload": {
+    "message": "透かしなし画像をダウンロード"
+  },
+  "geminiWatermarkDownloadOriginal": {
+    "message": "元画像をダウンロード"
+  },
+  "geminiWatermarkErrorGeneric": {
+    "message": "透かしの削除に失敗しました"
+  },
+  "geminiWatermarkErrorNoImage": {
+    "message": "処理できる画像が見つかりません"
+  },
+  "geminiWatermarkErrorTooSmall": {
+    "message": "画像が小さすぎるため、透かしを除去できません"
+  },
+  "geminiWatermarkErrorNoWatermark": {
+    "message": "Gemini の透かしが検出されませんでした"
+  },
+  "geminiWatermarkErrorUnreadable": {
+    "message": "画像ピクセルを読み取れません（ブラウザのセキュリティ制限の可能性）。元画像のダウンロードをお試しください"
   }
 }

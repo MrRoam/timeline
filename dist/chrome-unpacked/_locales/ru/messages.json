@@ -83,6 +83,9 @@
   "promptAllSettingsTooltip": {
     "message": "Все настройки"
   },
+  "shareExtension": {
+    "message": "Поделиться расширением"
+  },
   "promptCommonSmartInputHint": {
     "message": "В поле чата настройте, как клавиша Enter управляет переносом строк и отправкой сообщений"
   },
@@ -102,7 +105,7 @@
     "message": "Если Timeline полезен, поддержите проект звездой на GitHub."
   },
   "promptCommonMirrorSiteHint": {
-    "message": "Добавьте новый AI-чат, чтобы открыть функции «Таймлайн», подсказки и другие."
+    "message": "Адаптируйте другие AI-чаты, чтобы открыть функции «Таймлайн», подсказки, быстрые заметки и другие."
   },
   "promptCommonGithubStarButton": {
     "message": "Перейти на GitHub"
@@ -834,13 +837,13 @@
     "message": "Adapt a new AI platform"
   },
   "mirrorSiteAdapterHeroDesc": {
-    "message": "Не нашли AI-чат, которым пользуетесь? Будь то AI-зеркало, внутренний корпоративный AI-чат или малоизвестный AI-сайт — вы можете запросить адаптацию. После неё станут доступны функции «Таймлайн», подсказки и быстрые заметки."
+    "message": "AI-чат, которым вы пользуетесь, не поддерживается? Будь то внутренний корпоративный AI-чат или малоизвестный AI-сайт — вы можете запросить адаптацию. После неё станут доступны функции «Таймлайн», подсказки и быстрые заметки."
   },
   "mirrorSiteAdapterStartButton": {
     "message": "Start setup"
   },
   "mirrorSiteNativeSupportedTitle": {
-    "message": "AI-платформы с нативной поддержкой:"
+    "message": "AI-платформы с нативной поддержкой и их зеркала:"
   },
   "mirrorSiteWizardStep1": {
     "message": "Open the AI site you want to adapt and start a new conversation"
@@ -920,6 +923,12 @@
   "timelineAICompleteToastHint": {
     "message": "Показывать напоминание, когда ответ ИИ завершён, а вы не на последней позиции"
   },
+  "preventAutoScrollLabel": {
+    "message": "Сохранять позицию чтения при отправке"
+  },
+  "preventAutoScrollHint": {
+    "message": "Когда вы отправляете сообщение, просматривая более раннюю историю, страница остаётся на текущей позиции чтения, а не прыгает вниз"
+  },
   "timelineThemeColorLabel": {
     "message": "Цвет темы таймлайна"
   },
@@ -928,5 +937,32 @@
   },
   "timelineThemeColorManageButton": {
     "message": "Настроить"
+  },
+  "geminiWatermarkTitle": {
+    "message": "Удаление водяного знака Nano Banana"
+  },
+  "geminiWatermarkHint": {
+    "message": "Показывает варианты скачивания с удалением водяного знака для изображений, созданных Gemini: можно скачать исходное изображение или изображение без водяного знака в правом нижнем углу."
+  },
+  "geminiWatermarkDownload": {
+    "message": "Скачать изображение без водяного знака"
+  },
+  "geminiWatermarkDownloadOriginal": {
+    "message": "Скачать исходное изображение"
+  },
+  "geminiWatermarkErrorGeneric": {
+    "message": "Не удалось удалить водяной знак"
+  },
+  "geminiWatermarkErrorNoImage": {
+    "message": "Не найдено изображение для обработки"
+  },
+  "geminiWatermarkErrorTooSmall": {
+    "message": "Изображение слишком маленькое для удаления водяного знака"
+  },
+  "geminiWatermarkErrorNoWatermark": {
+    "message": "Водяной знак Gemini не обнаружен"
+  },
+  "geminiWatermarkErrorUnreadable": {
+    "message": "Не удалось прочитать пиксели (ограничения браузера). Попробуйте скачать оригинал"
   }
 }

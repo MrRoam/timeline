@@ -6,58 +6,41 @@
 
 class SiteAdapterRegistry {
     constructor() {
-        this.builtInAdapters = [
-            new ChatGPTAdapter(),
-            new GeminiAdapter(),
-            new DoubaoAdapter(),
-            new DeepSeekAdapter(),
-            new YiyanAdapter(),
-            new TongyiAdapter(),
-            new QwenAdapter(),
-            new KimiAdapter(),
-            new YuanbaoAdapter(),
-            new GrokAdapter(),
-            new PerplexityAdapter(),
-            new ClaudeAdapter(),
-            new NotebookLMAdapter(),
-            // Add more adapters here in the future
-        ];
+        this.builtInAdapters = [];
+        this.customAdapters = [];
+        this._registerBuiltInAdapters();
+        this.adapters = [...this.builtInAdapters];
+    }
+
+    /**
+     * 注册单个内置适配器，并挂上 platformId（与 SITE_INFO 的 id 一致）。
+     */
+    _registerAdapter(platformId, adapter) {
+        if (!platformId || !adapter) return;
+        adapter.platformId = platformId;
+        this.builtInAdapters.push(adapter);
+    }
+
+    /**
+     * 注册所有内置适配器。
+     */
+    _registerBuiltInAdapters() {
+        this._registerAdapter('chatgpt', new ChatGPTAdapter());
+    }
+
+    loadCustomAdapters() {
         this.customAdapters = [];
         this.adapters = [...this.builtInAdapters];
     }
 
-    loadCustomAdapters() {
-        try {
-            const staticConfigs = Array.isArray(window.CUSTOM_SITE_INFO)
-                ? window.CUSTOM_SITE_INFO
-                : [];
-            this.customAdapters = staticConfigs
-                .filter(config => config?.enabled !== false && Array.isArray(config.sites) && config.sites.length > 0)
-                .filter(config => !config.sites.some(site => this._isBuiltInSite(site)))
-                .map(config => new CustomSiteAdapter(config));
-        } catch {
-            this.customAdapters = [];
-        }
-        this.adapters = [...this.builtInAdapters, ...this.customAdapters];
-    }
-
-    _isBuiltInSite(site) {
-        if (!site || typeof SITE_INFO === 'undefined') return false;
-        return SITE_INFO.some(platform => platform.sites.some(builtInSite => (
-            site === builtInSite ||
-            site.endsWith(`.${builtInSite}`) ||
-            builtInSite.endsWith(`.${site}`)
-        )));
-    }
-
     /**
      * Detect and return the appropriate adapter for current site
-     * @returns {SiteAdapter|null}
+     * @returns {Promise<SiteAdapter|null>}
      */
-    detectAdapter() {
+    async detectAdapter() {
         const url = location.href;
         for (const adapter of this.adapters) {
-            if (adapter.matches(url)) {
+            if (await adapter.matches(url)) {
                 return adapter;
             }
         }
@@ -66,9 +49,22 @@ class SiteAdapterRegistry {
 
     /**
      * Check if current site is supported
-     * @returns {boolean}
+     * @returns {Promise<boolean>}
      */
-    isSupportedSite() {
-        return this.detectAdapter() !== null;
+    async isSupportedSite() {
+        return (await this.detectAdapter()) !== null;
     }
+
+    /**
+     * 获取全部已注册适配器。
+     * @returns {Array<SiteAdapter>}
+     */
+    getAllAdapters() {
+        return [...this.adapters];
+    }
+}
+
+// 全局只读单例：当前精简版只保留 ChatGPT 时间轴适配器。
+if (typeof window.siteAdapterRegistry === 'undefined') {
+    window.siteAdapterRegistry = new SiteAdapterRegistry();
 }

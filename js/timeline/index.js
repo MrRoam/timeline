@@ -105,8 +105,7 @@ async function initWithRetry(version, delays, retryIndex = 0) {
     // Lightweight check: can we initialize?
     if (await canInitialize()) {
         // Yes! Initialize the timeline
-        await initializeTimeline(version);
-        return;
+        if (await initializeTimeline(version)) return;
     }
     
     // No, retry with next delay
@@ -128,14 +127,6 @@ function detachRouteListeners() {
     TimelineUtils.removeEventListenerSafe(window, 'url:change', handleUrlChange);
 }
 
-function cleanupGlobalObservers() {
-    // 取消 DOMObserverManager 订阅
-    if (unsubscribePageObserver) {
-        unsubscribePageObserver();
-        unsubscribePageObserver = null;
-    }
-}
-
 function destroyTimelineInstance() {
     if (timelineManagerInstance) {
         try { timelineManagerInstance.destroy(); } catch (e) { console.warn('[AIT] destroy error:', e); }
@@ -143,7 +134,6 @@ function destroyTimelineInstance() {
     }
 
     TimelineUtils.removeElementSafe(document.querySelector('.ait-chat-timeline-wrapper'));
-    cleanupGlobalObservers();
 }
 
 async function initializeTimeline(version = initVersion) {
@@ -205,16 +195,17 @@ async function handleUrlChange() {
     }
 
     currentUrl = location.href;
-    initVersion++;
+    const currentVersion = ++initVersion;
     currentAdapter = null;
-    currentAdapter = await adapterRegistry.detectAdapter();
 
     // URL 变化了，先清理旧时间轴实例（内部会销毁 ChatTimeRecorder）
     destroyTimelineInstance();
+    const adapter = await adapterRegistry.detectAdapter();
+    if (currentVersion !== initVersion) return;
+    currentAdapter = adapter;
 
     // 如果当前是对话 URL，重新初始化
-    if (await isConversationRoute()) {
-        const currentVersion = initVersion;
+    if (await isConversationRoute() && currentVersion === initVersion) {
         void initWithRetry(currentVersion, TIMELINE_CONFIG.INIT_RETRY_DELAYS)
             .catch(e => console.error('[Timeline] Failed to init after URL change:', e));
     }
@@ -275,61 +266,39 @@ async function bootstrapTimeline() {
     }
 
     setupPlatformSettingsListener();
+    // 首页、慢加载页面与暂时关闭时间轴时，也必须监听 SPA 路由。
+    attachRouteListenersOnce();
     currentAdapter = await adapterRegistry.detectAdapter();
-    
-    // ✅ 修复：先检查DOM中是否已存在用户消息（SPA路由切换场景）
-    const checkAndInit = async () => {
-        const adapter = await resolveCurrentAdapter();
-        adapter?.prepareTimelineNodes?.({
-            force: true,
-            reason: 'bootstrap-check'
+
+    // 订阅随页面存活，覆盖重试结束后才出现的消息和同 URL 的容器替换。
+    // 不能在销毁某一条对话的时间轴时注销，否则后续慢加载会再次失效。
+    let readinessCheckInFlight = false;
+    if (window.DOMObserverManager && !unsubscribePageObserver) {
+        unsubscribePageObserver = window.DOMObserverManager.getInstance().subscribeBody('timeline-readiness', {
+            callback: () => {
+                if (readinessCheckInFlight || timelineInitInFlight) return;
+                if (timelineManagerInstance) {
+                    if (!timelineManagerInstance.conversationContainer?.isConnected) {
+                        timelineManagerInstance.ensureContainersUpToDate();
+                    }
+                    return;
+                }
+                readinessCheckInFlight = true;
+                const version = initVersion;
+                void (async () => {
+                    if (await isConversationRoute() && await isPlatformEnabled() && await canInitialize()
+                        && version === initVersion) {
+                        await initializeTimeline(version);
+                    }
+                })().catch(e => console.error('[Timeline] Failed to init from DOM observer:', e))
+                    .finally(() => { readinessCheckInFlight = false; });
+            },
+            debounce: 150
         });
-        const selector = adapter ? adapter.getUserMessageSelector() : null;
-        if (selector && document.querySelector(selector)) {
-            if (await isConversationRoute()) {
-                // Use retry mechanism for initial load as well
-                initVersion++;
-                const currentVersion = initVersion;
-                void initWithRetry(currentVersion, TIMELINE_CONFIG.INIT_RETRY_DELAYS)
-                    .catch(e => console.error('[Timeline] Failed to init during bootstrap:', e));
-            }
-            
-            attachRouteListenersOnce();
-            
-            return true; // 已初始化
-        }
-        return false; // 未初始化
-    };
-    
-    // ✅ 修复：立即检查一次（处理SPA路由切换到对话页的情况）
-    // ✅ 异步检查平台是否启用
-    const platformEnabled = await isPlatformEnabled();
-    if (!platformEnabled) {
-        return; // 当前平台未启用，不初始化
     }
 
-    if (await checkAndInit()) {
-        // 已经初始化成功，不需要observer
-    } else {
-        // 还没有用户消息，使用 DOMObserverManager 等待
-        let unsubscribeInitial = null;
-        if (window.DOMObserverManager) {
-            unsubscribeInitial = window.DOMObserverManager.getInstance().subscribeBody('timeline-initial', {
-                callback: () => {
-                    void (async () => {
-                        if (await checkAndInit()) {
-                            // 初始化成功，取消订阅
-                            if (unsubscribeInitial) {
-                                unsubscribeInitial();
-                                unsubscribeInitial = null;
-                            }
-                        }
-                    })().catch(e => console.error('[Timeline] Failed to init from DOM observer:', e));
-                },
-                debounce: 150  // 150ms 防抖
-            });
-        }
-    }
+    void initWithRetry(initVersion, TIMELINE_CONFIG.INIT_RETRY_DELAYS)
+        .catch(e => console.error('[Timeline] Failed to init during bootstrap:', e));
 }
 
 bootstrapTimeline().catch(e => console.error('[Timeline] Failed to bootstrap:', e));

@@ -10,7 +10,7 @@
  * - Event handling (click, hover, long-press)
  * - Scroll synchronization
  * - Tooltip management
- * - Star/highlight persistence
+ * - Star persistence
  * - Virtual rendering for performance
  */
 
@@ -24,11 +24,13 @@ class TimelineManager {
         this.conversationContainer = null;
         this.markers = [];
         this.activeTurnId = null;
-        this.ui = { timelineBar: null, tooltip: null, track: null, trackContent: null, tempPinBtn: null };
+        this.ui = { timelineBar: null, tooltip: null, track: null, trackContent: null, tempPinBtn: null, autoSendImageUploadToggle: null };
         
         // ✅ 上次渲染时的节点状态（用于变化检测，决定是否需要重新计算）
         this._renderedNodeCount = 0;
         this._renderedNodeIds = new Set();
+        this._timelineStructureSelector = '';
+        this._timelineStructureAttributeFilter = [];
 
         this.mutationObserver = null;
         this.resizeObserver = null;
@@ -42,6 +44,7 @@ class TimelineManager {
         this._timelineVisibilityObservedTargets = new Set();
         this._timelineVisibilityTimer = null;
         this._unsubscribeTheme = null;
+        this._unsubscribeCapturedChatsData = null;
         
         // Event handlers
         this.onTimelineBarClick = null;
@@ -55,7 +58,17 @@ class TimelineManager {
         this.onTimelineWheel = null;
         this.onStorage = null;
         this.onVisualViewportResize = null;
-        this.onAIStateChange = null;
+        this.onPageHide = null;
+        this.onBeforeUnload = null;
+        this.onVisibilityChange = null;
+        this.onPotentialSendClick = null;
+        this.onPotentialSendKeyDown = null;
+        this.onAutoSendImageUploadChange = null;
+        this.onAutoSendImageUploadCandidate = null;
+        this.onAutoSendImageUploadsToggleClick = null;
+        this.onAutoSendImageUploadsToggleMouseEnter = null;
+        this.onAutoSendImageUploadsToggleMouseLeave = null;
+        this.scrollPositionSaveTimer = null;
         // ✅ 长按相关事件处理器
         this.startLongPress = null;
         this.checkLongPressMove = null;
@@ -64,8 +77,6 @@ class TimelineManager {
         this.onKeyDown = null;
         // ✅ 键盘导航功能启用状态（内存缓存，默认开启）
         this.arrowKeysNavigationEnabled = true;
-        // ✅ AI 回复完成提醒启用状态（内存缓存，默认开启）
-        this.aiCompleteToastEnabled = true;
         // ✅ 平台设置（内存缓存）
         this.platformSettings = {};
         // ✅ 时间轴激活节点颜色设置（内存缓存）
@@ -78,7 +89,6 @@ class TimelineManager {
         this.resizeIdleTimer = null;
         this.resizeIdleRICId = null;
         this.zeroTurnsTimer = null;
-        this.aiCompleteToastTimer = null;
         
         // Padding 管理：AI 生成中不更新，生成结束后更新
         this._pendingPaddingUpdate = null;
@@ -133,17 +143,51 @@ class TimelineManager {
         
         // ✅ 临时 Pin 功能状态：只保存在当前页面内存中，不写入 chrome.storage
         this.temporaryPin = null;
+        this.pinNavigationActive = false;
+        this.PIN_NAVIGATION_TOLERANCE = 4;
+        this.pendingAutoBottomJump = null;
+        this.autoBottomJumpFlashMarker = null;
+        this.autoBottomJumpFlashTimer = null;
+        this._lastScrollSnapshot = null;
+        this._lastPreBottomScrollSnapshot = null;
+        this._pendingMessageSendSnapshot = null;
+        this._initialNavigationHandled = false;
+        this._savedScrollPositionRestored = false;
+        this.AUTO_BOTTOM_JUMP_CONFIRM_MS = 6000;
+        this.AUTO_BOTTOM_JUMP_PENDING_MS = 2500;
+        this.AUTO_BOTTOM_JUMP_PRE_SNAPSHOT_MS = 2500;
+        this.AUTO_BOTTOM_JUMP_SEND_SNAPSHOT_MS = 5000;
+        this.AUTO_BOTTOM_JUMP_MIN_DELTA = 80;
+        this.SCROLL_POSITION_SAVE_DELAY = 750;
         this.pinned = new Set();
         this.pinnedIndexes = new Set();
+
+        // 上传图片后自动发送：暂时下线。保留实现，重新开放时只需切换此产品开关。
+        this.autoSendImageUploadsAvailable = false;
+        this.autoSendImageUploadsEnabled = false;
+        this._pendingAutoSendImageUpload = null;
+        this._autoSendImageUploadTimer = null;
+        this.AUTO_SEND_IMAGE_UPLOAD_INITIAL_DELAY = 300;
+        this.AUTO_SEND_IMAGE_UPLOAD_CHECK_DELAY = 250;
+        this.AUTO_SEND_IMAGE_UPLOAD_TIMEOUT = 45000;
         
         // ✅ URL 到网站信息的映射字典（包含名称和 logo）
-        // 使用 constants.js 中的函数生成 siteNameMap
-        this.siteNameMap = getSiteNameMap();
+        // 使用 constants.js 中的函数生成 siteNameMap（在 init() 中异步填充）
+        this.siteNameMap = {};
+        this._currentPlatform = null;
         
         // ✅ 文件夹管理器（用于收藏功能）
         this.folderManager = null;
+        this._destroyed = false;
+        this._folderManagerInitTimer = null;
+        this._initialRenderTimer = null;
+        this._initialSecondRenderTimer = null;
+        this._initialStarredBtnRaf1 = null;
+        this._initialStarredBtnRaf2 = null;
         // 延迟初始化，确保 FolderManager 类已加载
-        setTimeout(() => {
+        this._folderManagerInitTimer = setTimeout(() => {
+            this._folderManagerInitTimer = null;
+            if (this._destroyed) return;
             if (typeof FolderManager !== 'undefined') {
                 this.folderManager = new FolderManager(StorageAdapter);
             }
@@ -152,20 +196,50 @@ class TimelineManager {
         // ✅ 健康检查定时器
         this.healthCheckInterval = null;
 
-        // ✅ AI 回复完成提示使用的右上角定位锚点
-        this.aiCompleteToastAnchor = null;
     }
 
     getTimelineFeatures() {
-        return this.adapter.getFeatures?.() || getCurrentPlatform()?.features || {};
+        return this.adapter.getFeatures?.() || this._currentPlatform?.features || {};
+    }
+
+    _getMessageRect(element) {
+        return this.adapter.getTimelineMessageRect?.(element) || element.getBoundingClientRect();
+    }
+
+    _getMessageHeight(element) {
+        return this.adapter.getTimelineMessageRect?.(element)?.height ?? (element.offsetHeight || 0);
+    }
+
+    _collectUserTurnElements({ scope = document, forcePrepare = false, reason = '' } = {}) {
+        this.adapter.prepareTimelineNodes?.({ force: forcePrepare, reason });
+        const selector = this.adapter.getUserMessageSelector();
+        if (!selector) return { selector: '', userTurnElements: [] };
+
+        let userTurnElements = [];
+        try {
+            userTurnElements = Array.from(scope.querySelectorAll(selector));
+        } catch {}
+        return { selector, userTurnElements };
     }
 
     async init() {
+        this._currentPlatform = await getCurrentPlatform();
+        if (this._destroyed) return false;
+        this.siteNameMap = await getSiteNameMap();
+        if (this._destroyed) return false;
+
         const elementsFound = await this.findCriticalElements();
-        if (!elementsFound) return;
+        if (this._destroyed || !elementsFound) return false;
         
         // ✅ 同步深色模式状态到 html 元素
         this.syncDarkModeClass();
+
+        if (this.autoSendImageUploadsAvailable) {
+            await this.loadAutoSendImageUploadsState();
+        } else {
+            this.autoSendImageUploadsEnabled = false;
+        }
+        if (this._destroyed) return false;
         
         this.injectTimelineUI();
         this.setupEventListeners();
@@ -174,48 +248,81 @@ class TimelineManager {
         // Load persisted star markers for current conversation
         this.conversationId = this.adapter.extractConversationId(location.pathname);
         await this.loadStars();
+        if (this._destroyed) return false;
         // ✅ 加载标记数据
         await this.loadPins();
+        if (this._destroyed) return false;
         // ✅ 加载键盘导航功能状态
         await this.loadArrowKeysNavigationState();
-        // ✅ 加载 AI 回复完成提醒状态
-        await this.loadAICompleteToastState();
         // ✅ 加载平台设置
         await this.loadPlatformSettings();
+        if (this._destroyed) return false;
         // ✅ 加载激活节点颜色设置
         await this.loadTimelineActiveColorSettings();
+        if (this._destroyed) return false;
         this.applyTimelineActiveColor();
         
         // Trigger initial rendering after a short delay to ensure DOM is stable
         // This fixes the bug where nodes don't appear until scroll
-        setTimeout(async () => {
+        this._initialRenderTimer = setTimeout(async () => {
+            this._initialRenderTimer = null;
+            if (this._destroyed) return;
             this.recalculateAndRenderMarkers();
             // 初始化后手动触发一次滚动同步，确保激活状态正确
             this.scheduleScrollSync();
             
             // ✅ 延迟二次计算：页面初始化后某些元素可能还没展开
-            setTimeout(() => this.recalculateAndRenderMarkers(), 500);
+            this._initialSecondRenderTimer = setTimeout(() => {
+                this._initialSecondRenderTimer = null;
+                if (!this._destroyed) {
+                    this.recalculateAndRenderMarkers();
+                }
+            }, 500);
             
             // ✅ 等待时间轴渲染完成后，再显示收藏按钮
             // 使用双重 requestAnimationFrame 确保浏览器完成绘制
-            requestAnimationFrame(() => {
-                requestAnimationFrame(async () => {
+            this._initialStarredBtnRaf1 = requestAnimationFrame(() => {
+                this._initialStarredBtnRaf1 = null;
+                if (this._destroyed) return;
+                this._initialStarredBtnRaf2 = requestAnimationFrame(async () => {
+                    this._initialStarredBtnRaf2 = null;
+                    if (this._destroyed) return;
                     // 此时浏览器已经完成时间轴的渲染
                     await this.updateStarredBtnVisibility();
                 });
             });
             
             // ✅ 启动健康检查
-            this.startHealthCheck();
+            if (!this._destroyed) this.startHealthCheck();
         }, TIMELINE_CONFIG.INITIAL_RENDER_DELAY);
+
+        return true;
     }
     
     async findCriticalElements() {
-        const selector = this.adapter.getUserMessageSelector();
-        const firstTurn = await this.waitForElement(selector);
+        let prepared = this._collectUserTurnElements({
+            scope: document,
+            forcePrepare: true,
+            reason: 'initialization'
+        });
+        let firstTurn = prepared.userTurnElements[0] || null;
+        if (!firstTurn) {
+            firstTurn = await this.waitForElement(prepared.selector);
+            if (firstTurn) {
+                prepared = this._collectUserTurnElements({
+                    scope: document,
+                    forcePrepare: true,
+                    reason: 'initialization-ready'
+                });
+                firstTurn = prepared.userTurnElements[0] || firstTurn;
+            }
+        }
         if (!firstTurn) return false;
         
-        this.conversationContainer = this.adapter.findConversationContainer(firstTurn);
+        this.conversationContainer = this.adapter.findConversationContainer(firstTurn, {
+            messageSelector: prepared.selector,
+            userTurnElements: prepared.userTurnElements
+        });
         if (!this.conversationContainer) return false;
 
         let parent = this.conversationContainer;
@@ -256,6 +363,7 @@ class TimelineManager {
         }
         this.ui.timelineBar = timelineBar;
         this.applyTimelineActiveColor();
+        this.injectAutoSendImageUploadToggle(wrapper, timelineBar);
         
         // Apply site-specific position from adapter to wrapper
         const position = this.adapter.getTimelinePosition();
@@ -330,38 +438,9 @@ class TimelineManager {
             this.cacheTooltipConfig();
         });
         
-        // ✅ 添加提问列表按钮（在收藏按钮上方）
-        if (this.getTimelineFeatures()?.questionList === true) {
-            let questionListBtn = document.querySelector('.ait-question-list-btn');
-            if (!questionListBtn) {
-                questionListBtn = document.createElement('button');
-                questionListBtn.className = 'ait-question-list-btn';
-                questionListBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>';
-                questionListBtn.setAttribute('aria-label', chrome.i18n.getMessage('questionListTitle') || 'Questions');
-                questionListBtn.style.display = 'none';
-
-                questionListBtn.addEventListener('mouseenter', () => {
-                    window.globalTooltipManager.show(
-                        'question-list-btn',
-                        'button',
-                        questionListBtn,
-                        chrome.i18n.getMessage('questionListTitle') || 'Questions',
-                        { placement: 'left' }
-                    );
-                });
-                questionListBtn.addEventListener('mouseleave', () => {
-                    window.globalTooltipManager.hide();
-                });
-
-                wrapper.appendChild(questionListBtn);
-            }
-            this.ui.questionListBtn = questionListBtn;
-
-            // ✅ 绑定提问列表面板到 wrapper
-            if (window.questionListPopup) {
-                window.questionListPopup.bind(wrapper, timelineBar);
-            }
-        }
+        // Questions 入口从时间轴移除；同时清理热更新前可能遗留的旧按钮。
+        wrapper.querySelector('.ait-question-list-btn')?.remove();
+        this.ui.questionListBtn = null;
 
         // ✅ 添加收藏按钮（在 timeline-bar 下方 10px 处，垂直居中对齐）
         let starredBtn = document.querySelector('.timeline-starred-btn');
@@ -403,15 +482,14 @@ class TimelineManager {
                 tempPinBtn.type = 'button';
                 tempPinBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1 1 1 0 0 1 1 1z"/></svg>';
                 tempPinBtn.setAttribute('aria-label', chrome.i18n.getMessage('pinChatAction') || 'Pin chat');
-                tempPinBtn.setAttribute('aria-pressed', 'false');
-                tempPinBtn.style.display = 'none';
+                tempPinBtn.style.display = 'flex';
 
                 tempPinBtn.addEventListener('mouseenter', () => {
                     window.globalTooltipManager.show(
                         'temp-pin-btn',
                         'button',
                         tempPinBtn,
-                        chrome.i18n.getMessage('pinChatAction') || 'Pin chat',
+                        tempPinBtn.getAttribute('aria-label') || chrome.i18n.getMessage('pinChatAction') || 'Pin chat',
                         { placement: 'left' }
                     );
                 });
@@ -423,13 +501,47 @@ class TimelineManager {
                 wrapper.appendChild(tempPinBtn);
             }
             this.ui.tempPinBtn = tempPinBtn;
+            this.ui.tempPinBtn.style.display = 'flex';
             this.updateTempPinButtonState();
         }
         
         // ✅ 收藏按钮使用相对定位，不需要动态计算位置
         
-        // ✅ 添加收藏整个聊天的按钮（插入到平台原生UI中）
-        this.injectStarChatButton();
+    }
+
+    injectAutoSendImageUploadToggle(wrapper, timelineBar) {
+        if (!this.autoSendImageUploadsAvailable) {
+            wrapper?.querySelector('.ait-auto-send-upload-toggle')?.remove();
+            this.ui.autoSendImageUploadToggle = null;
+            return;
+        }
+        const inputSelector = this.adapter.getImageUploadInputSelector?.();
+        if (!inputSelector || !wrapper || !timelineBar) return;
+
+        let toggle = wrapper.querySelector('.ait-auto-send-upload-toggle');
+        if (!toggle) {
+            toggle = document.createElement('button');
+            toggle.className = 'ait-auto-send-upload-toggle';
+            toggle.type = 'button';
+            toggle.setAttribute('role', 'switch');
+            toggle.setAttribute('aria-label', '上传图片后自动发送');
+            toggle.innerHTML = `
+                <span class="ait-auto-send-upload-toggle-icon" aria-hidden="true">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <circle cx="8.5" cy="8.5" r="1.5"/>
+                        <path d="M21 15l-5-5L5 21"/>
+                    </svg>
+                </span>
+                <span class="ait-auto-send-upload-toggle-track" aria-hidden="true">
+                    <span class="ait-auto-send-upload-toggle-knob"></span>
+                </span>
+            `;
+        }
+
+        wrapper.insertBefore(toggle, timelineBar);
+        this.ui.autoSendImageUploadToggle = toggle;
+        this.updateAutoSendImageUploadToggleState();
     }
     
     // ✅ 收起/展开按钮的 SVG 图标常量
@@ -580,7 +692,7 @@ class TimelineManager {
             const firstMsg = this.conversationContainer.querySelector(selector);
             if (!firstMsg) return true;
             
-            const rect = firstMsg.getBoundingClientRect();
+            const rect = this._getMessageRect(firstMsg);
             if (rect.width === 0) return true; // 不可见时默认显示
             
             // 计算距离浏览器右边框的距离
@@ -601,11 +713,6 @@ class TimelineManager {
         
         const isCollapsed = this.ui.wrapper.classList.toggle('ait-collapsed');
         this.updateToggleButtonIcon(isCollapsed);
-        
-        // 收起时关闭闪记面板
-        if (isCollapsed && window.notepadManager && window.notepadManager.isOpen) {
-            window.notepadManager.close();
-        }
         
         // 保存状态到 chrome.storage.local，并通过 _ 前缀排除云同步
         try {
@@ -635,251 +742,6 @@ class TimelineManager {
         if (!this.ui.toggleBtn) return;
         this.ui.toggleBtn.innerHTML = isCollapsed ? TimelineManager.TOGGLE_ICON_EXPAND : TimelineManager.TOGGLE_ICON_COLLAPSE;
         this.ui.toggleBtn.classList.toggle('collapsed', isCollapsed);
-    }
-    
-    /**
-     * ✅ 注入收藏聊天按钮（原生插入模式）
-     */
-    async injectStarChatButton() {
-        // 1. 获取Adapter提供的目标元素
-        const targetElement = this.adapter.getStarChatButtonTarget?.();
-        
-        // 如果没有目标元素，不显示按钮
-        if (!targetElement) {
-            return;
-        }
-        
-        // 2. 检查是否已存在按钮
-        let starChatBtn = document.querySelector('.ait-timeline-star-chat-btn-native');
-        
-        if (starChatBtn) {
-            // ✅ 按钮已存在，只更新状态，不重建（避免事件监听器丢失）
-            const isStarred = await this.isChatStarred();
-            const svg = starChatBtn.querySelector('svg');
-            if (svg) {
-                svg.setAttribute('fill', isStarred ? 'rgb(255, 125, 3)' : 'none');
-                svg.setAttribute('stroke', isStarred ? 'rgb(255, 125, 3)' : 'currentColor');
-            }
-            // 保存引用
-            this.ui.starChatBtn = starChatBtn;
-            return;
-        }
-        
-        // 3. 创建新按钮
-        starChatBtn = document.createElement('button');
-        starChatBtn.className = 'ait-timeline-star-chat-btn-native';
-        
-        // 4. 检查收藏状态并设置图标
-        const isStarred = await this.isChatStarred();
-        starChatBtn.innerHTML = `
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="${isStarred ? 'rgb(255, 125, 3)' : 'none'}" stroke="${isStarred ? 'rgb(255, 125, 3)' : 'currentColor'}" stroke-width="2">
-                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-            </svg>
-        `;
-        
-        // 5. 设置基础样式（适配原生UI）
-        const isDeepSeek = this.adapter.constructor.name === 'DeepSeekAdapter';
-        starChatBtn.style.cssText = `
-            width: 36px;
-            height: 36px;
-            padding: 0;
-            background: transparent;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            transition: background-color 0.2s;
-            ${isDeepSeek ? 'position: absolute; top: 14px; right: 56px; z-index: 1000;' : 'position: relative;'}
-        `;
-        
-        // 6. Hover效果和tooltip - 直接绑定（mouseenter/mouseleave 不冒泡）
-        starChatBtn.addEventListener('mouseenter', async () => {
-            starChatBtn.style.backgroundColor = 'rgba(0, 0, 0, 0.05)';
-            
-            const isStarred = await this.isChatStarred();
-            const tooltipText = isStarred ? chrome.i18n.getMessage('bpxjkw') : chrome.i18n.getMessage('zmvkpx');
-            
-            window.globalTooltipManager?.show(
-                'star-chat-btn',
-                'button',
-                starChatBtn,
-                tooltipText,
-                { placement: 'bottom' }
-            );
-        });
-        
-        starChatBtn.addEventListener('mouseleave', () => {
-            starChatBtn.style.backgroundColor = 'transparent';
-            window.globalTooltipManager?.hide();
-        });
-        
-        // 7. 点击事件 - 使用事件委托（click 可以冒泡）
-        this._setupStarChatBtnClickEvent();
-        
-        // 9. 插入按钮到原生UI
-        targetElement.parentNode.insertBefore(starChatBtn, targetElement);
-        
-        // 10. 保存引用
-        this.ui.starChatBtn = starChatBtn;
-    }
-    
-    /**
-     * ✅ 设置收藏聊天按钮的点击事件委托
-     * 使用事件委托解决页面长时间停留后点击事件失效的问题
-     */
-    _setupStarChatBtnClickEvent() {
-        const edm = window.eventDelegateManager;
-        if (!edm) {
-            console.warn('[TimelineManager] eventDelegateManager not available for star chat btn');
-            return;
-        }
-        
-        // 点击：切换收藏状态
-        edm.on('click', '.ait-timeline-star-chat-btn-native', async (e, btn) => {
-            const result = await this.toggleChatStar();
-            
-            if (result && result.success) {
-                const nowStarred = await this.isChatStarred();
-                const svg = btn.querySelector('svg');
-                if (svg) {
-                    svg.setAttribute('fill', nowStarred ? 'rgb(255, 125, 3)' : 'none');
-                    svg.setAttribute('stroke', nowStarred ? 'rgb(255, 125, 3)' : 'currentColor');
-                }
-                
-                // 更新 tooltip 文本
-                const newText = nowStarred ? chrome.i18n.getMessage('bpxjkw') : chrome.i18n.getMessage('zmvkpx');
-                window.globalTooltipManager?.updateContent(newText);
-                
-                // 显示 toast
-                if (window.globalToastManager) {
-                    const toastColor = {
-                        light: { backgroundColor: '#0d0d0d', textColor: '#ffffff', borderColor: '#262626' },
-                        dark: { backgroundColor: '#ffffff', textColor: '#1f2937', borderColor: '#d1d5db' }
-                    };
-                    
-                    if (result.action === 'star') {
-                        window.globalToastManager.success(chrome.i18n.getMessage('kxpmzv'), null, { color: toastColor });
-                    } else if (result.action === 'unstar') {
-                        window.globalToastManager.info(chrome.i18n.getMessage('pzmvkx'), null, { color: toastColor });
-                    }
-                }
-            }
-        });
-    }
-    
-    /**
-     * ✅ 显示编辑对话框（使用全局 Input Modal）
-     */
-    async showEditDialog(currentText) {
-        if (!window.globalInputModal) {
-            console.error('[TimelineManager] globalInputModal not available');
-            return null;
-        }
-        
-        return await window.globalInputModal.show({
-            title: chrome.i18n.getMessage('vkpxzm'),
-            defaultValue: currentText,
-            placeholder: chrome.i18n.getMessage('zmxvkp'),
-            required: true,
-            requiredMessage: chrome.i18n.getMessage('pzmkvx'),
-            maxLength: 100
-        });
-    }
-    
-    /**
-     * ✅ 检查当前聊天是否已被收藏
-     */
-    async isChatStarred() {
-        try {
-            const urlWithoutProtocol = location.href.replace(/^https?:\/\//, '');
-            const key = `chatTimelineStar:${urlWithoutProtocol}:-1`;
-            return await StarStorageManager.exists(key);
-        } catch (e) {
-            return false;
-        }
-    }
-    
-    /**
-     * ✅ 切换聊天收藏状态
-     */
-    async toggleChatStar() {
-        try {
-            const urlWithoutProtocol = location.href.replace(/^https?:\/\//, '');
-            const key = `chatTimelineStar:${urlWithoutProtocol}:-1`;
-            const existingValue = await StarStorageManager.findByKey(key);
-            
-            if (existingValue) {
-                // 已收藏，取消收藏
-                await StarStorageManager.remove(key);
-                return { success: true, action: 'unstar' };
-            } else {
-                // 未收藏，显示输入主题弹窗（带文件夹选择器）
-                if (!window.starInputModal) {
-                    console.error('[TimelineManager] starInputModal not available');
-                    return { success: false, action: null };
-                }
-                
-                // 获取默认主题（通过 Adapter 提供）
-                const defaultTheme = this.adapter.getDefaultChatTheme?.() || '';
-                
-                const result = await window.starInputModal.show({
-                    title: chrome.i18n.getMessage('zmvkpx'),
-                    defaultValue: defaultTheme,
-                    placeholder: chrome.i18n.getMessage('zmxvkp'),
-                    folderManager: this.folderManager,
-                    defaultFolderId: null
-                });
-                
-                if (!result) {
-                    // 用户取消了
-                    return { success: false, action: 'cancelled' };
-                }
-                
-                // 添加收藏
-                // ✅ 限制收藏文字长度为前100个字符
-                const truncatedTheme = this.truncateText(result.value, 100);
-                const value = {
-                    key,
-                    url: location.href,
-                    urlWithoutProtocol: urlWithoutProtocol,
-                    index: -1,
-                    question: truncatedTheme,
-                    timestamp: Date.now(),
-                    folderId: result.folderId || null
-                };
-                await StarStorageManager.add(value);
-                
-                // ✅ 不再需要手动更新收藏列表UI，StarredTab 会自动监听存储变化
-                return { success: true, action: 'star' };
-            }
-        } catch (e) {
-            console.error('Failed to toggle chat star:', e);
-            return { success: false, action: null };
-        }
-    }
-    
-    /**
-     * ✅ 显示主题输入对话框（使用全局 Input Modal）
-     */
-    async showThemeInputDialog() {
-        if (!window.globalInputModal) {
-            console.error('[TimelineManager] globalInputModal not available');
-            return null;
-        }
-        
-            // 获取默认主题（通过 Adapter 提供）
-            const defaultTheme = this.adapter.getDefaultChatTheme?.() || '';
-            
-        return await window.globalInputModal.show({
-            title: chrome.i18n.getMessage('qwxpzm'),
-            defaultValue: defaultTheme,
-            placeholder: chrome.i18n.getMessage('zmxvkp'),
-            required: true,
-            requiredMessage: chrome.i18n.getMessage('mzpxvk'),
-            maxLength: 100
-        });
     }
     
     /**
@@ -915,10 +777,11 @@ class TimelineManager {
     recalculateAndRenderMarkers() {
         if (!this.conversationContainer || !this.ui.timelineBar || !this.scrollContainer) return;
 
-        if (window.questionListPopup) window.questionListPopup.onMarkersRebuilt();
-
-        const selector = this.adapter.getUserMessageSelector();
-        let userTurnElements = this.conversationContainer.querySelectorAll(selector);
+        this.adapter.syncCapturedChatsData?.();
+        let userTurnElements = this._collectUserTurnElements({
+            scope: this.conversationContainer,
+            reason: 'marker-recalculation'
+        }).userTurnElements;
         
         // Reset visible window to avoid cleaning with stale indices after rebuild
         this.visibleRange = { start: 0, end: -1 };
@@ -937,23 +800,6 @@ class TimelineManager {
         // ✅ 确定有节点要渲染，注入收起/展开切换按钮（首次调用时创建，后续调用直接跳过）
         this.injectToggleButton();
 
-        /**
-         * ✅ 按照元素在页面上的实际位置（从上往下）排序
-         * 确保节点顺序和视觉顺序完全一致，适用于所有网站
-         * 
-         * ✅ 性能优化：批量读取所有 rect 后再排序
-         * 原因：getBoundingClientRect() 会触发浏览器重排
-         * 批量读取可以让浏览器合并重排操作，减少布局抖动
-         */
-        const elementsArray = Array.from(userTurnElements);
-        // 一次性批量读取所有 rect（利用浏览器批量优化）
-        const rectsMap = new Map();
-        elementsArray.forEach(el => rectsMap.set(el, el.getBoundingClientRect()));
-        // 使用缓存的 rect 进行排序
-        userTurnElements = elementsArray.sort((a, b) => 
-            rectsMap.get(a).top - rectsMap.get(b).top
-        );
-        
         /**
          * ✅ 性能优化：只在节点真正变化时重新计算位置
          * 
@@ -988,15 +834,12 @@ class TimelineManager {
         
         // 如果节点没有变化，只更新渲染，不重新计算位置
         if (!needsRecalculation && this.markers.length > 0) {
+            this.refreshPlaceholderSummaries({ force: true });
             // 只更新视图和同步状态（不涉及位置计算）
             this.syncTimelineTrackToMain();
             this.updateVirtualRangeAndRender();
             this.updateActiveDotUI();
             this.scheduleScrollSync();
-            // 重新渲染时间标签（虚拟滚动可能导致新元素出现但节点数不变）
-            if (window.chatTimeRecorder) {
-                window.chatTimeRecorder._renderTimeLabels();
-            }
             return;
         }
         
@@ -1020,6 +863,7 @@ class TimelineManager {
                 };
                 
                 pendingNodesChange = { previousCount, currentCount };
+                this._captureAutoBottomJumpCandidate(previousCount, currentCount);
             }
         }
         
@@ -1057,7 +901,7 @@ class TimelineManager {
          * - 结果 = 元素相对于容器内容区域顶部的绝对距离
          */
         const getOffsetTop = (element, container) => {
-            const elemRect = element.getBoundingClientRect();
+            const elemRect = this._getMessageRect(element);
             const contRect = container.getBoundingClientRect();
             let contScrollTop = container.scrollTop || 0;
             
@@ -1124,9 +968,6 @@ class TimelineManager {
         // Build markers with normalized position along conversation
         this.markerMap.clear();
         
-        // 调用 fiber bridge 提取文本（仅 ChatGPT 等实现了该方法的平台）
-        const fiberTexts = this.adapter.extractFiberTexts?.() || new Map();
-        
         this.markers = Array.from(userTurnElements).map((el, index, arr) => {
             /**
              * ✅ 节点位置信息：
@@ -1143,7 +984,7 @@ class TimelineManager {
             const offsetTop = nodeOffsets[index];
             
             // offsetBottom: 节点结束位置 = offsetTop + 节点高度（像素）
-            const nodeHeight = el.offsetHeight || 0;
+            const nodeHeight = this._getMessageHeight(el);
             const offsetBottom = offsetTop + nodeHeight;
             
             // visualN: 用于时间轴圆点定位（0~1，保留6位小数）
@@ -1153,14 +994,10 @@ class TimelineManager {
             
             const id = this.adapter.generateTurnId(el, index);
             
-            // 优先使用 fiber 文本，回退到 DOM 提取
-            const turnIdRaw = el.getAttribute?.('data-turn-id');
-            const fiberText = turnIdRaw ? fiberTexts.get(turnIdRaw) : null;
-            
             const m = {
                 id: id,
                 element: el,
-                summary: fiberText || this.adapter.extractText(el),
+                summary: this.adapter.extractText(el),
                 offsetTop,      // 节点顶部距离（像素）- 用于激活判断
                 offsetBottom,   // 节点结束位置（像素）
                 visualN,        // 原始位置比例（0~1）
@@ -1240,6 +1077,7 @@ class TimelineManager {
         this.updateActiveDotUI();
         this.scheduleScrollSync();
         this.updateIntersectionObserverTargets();
+        if (window.questionListPopup) window.questionListPopup.onMarkersRebuilt();
         
         // ✅ 对外派发节点数量变化事件
         if (pendingNodesChange) {
@@ -1276,60 +1114,96 @@ class TimelineManager {
             return null;
         };
         
-        // ✅ 检查是否有跨页面导航任务（同站跳转，如从收藏列表点击）
-        this.getNavigateData('targetIndex').then(nodeKey => {
-            const marker = findMarkerByNodeKey(nodeKey);
-            if (marker && marker.element) {
-                // 延迟500ms，等待页面完全加载后再定位
-                setTimeout(() => {
-                    this.smoothScrollTo(marker.element);
-                }, 500);
-            }
-        }).catch(() => {});
-        
-        // ✅ 检查是否有跨网站导航任务（跨站跳转，如从收藏列表点击其他网站的记录）
-        this.checkCrossSiteNavigate().then(nodeKey => {
-            const marker = findMarkerByNodeKey(nodeKey);
-            if (marker && marker.element) {
-                // 延迟500ms，等待页面完全加载后再定位
-                setTimeout(() => {
-                    this.smoothScrollTo(marker.element);
-                }, 500);
-            }
-        }).catch(() => {});
-        
-        // 重新渲染时间标签（处理虚拟滚动后新出现的消息元素）
-        if (window.chatTimeRecorder) {
-            window.chatTimeRecorder._renderTimeLabels();
-        }
-        
+        this.handleInitialNavigationOrRestore(findMarkerByNodeKey).catch(() => {});
+
     }
-    
+
+    mutationTouchesUserTurns(mutations) {
+        const elementNode = (typeof Node !== 'undefined' && Node.ELEMENT_NODE) || 1;
+        const selectors = this.adapter.getTimelineStructureSelectors?.()
+            || [this.adapter.getUserMessageSelector?.()].filter(Boolean);
+        const selector = selectors.filter(Boolean).join(',');
+        if (!selector) return false;
+
+        const touchesTimelineStructure = (node) => {
+            if (node?.nodeType !== elementNode) return false;
+            try {
+                return node.matches?.(selector) || Boolean(node.querySelector?.(selector));
+            } catch {
+                return false;
+            }
+        };
+
+        const changed = mutations.some(mutation => {
+            const target = mutation.target?.nodeType === elementNode
+                ? mutation.target : mutation.target?.parentElement;
+            // 角色标题可能先插入空节点，再补文本；流式正文文本仍直接忽略。
+            if (target?.matches?.('h4.sr-only')) return true;
+            if (mutation.type === 'characterData') return false;
+            if (mutation.type === 'attributes') {
+                if (mutation.attributeName === 'data-is-intersecting') {
+                    // true/false 只是滚动状态；只有属性新增或移除才表示结构准备就绪状态变化。
+                    return mutation.oldValue === null
+                        || !mutation.target?.hasAttribute?.('data-is-intersecting');
+                }
+                return true;
+            }
+            if (mutation.type !== 'childList') return false;
+            if (Array.from(target?.children || []).some(child => child.matches?.('h4.sr-only'))) {
+                return true; // 标题先出现、正文随后挂载。
+            }
+
+            const nodes = [
+                ...Array.from(mutation.addedNodes || []),
+                ...Array.from(mutation.removedNodes || [])
+            ];
+            // 虚拟化窗口切换会增删带 data-turn 的子树；普通 token、代码块、
+            // 按钮等变化不触碰这些稳定结构，避免生成回复时反复全量扫描。
+            return nodes.some(touchesTimelineStructure);
+        });
+
+        if (changed) {
+            this.adapter.invalidateTimelineNodes?.('structure-mutation');
+        }
+        return changed;
+    }
+
+    observeConversationMutations() {
+        if (!this.mutationObserver || !this.conversationContainer) return;
+        const options = {
+            ...this.adapter.getTimelineStructureObserverOptions?.(),
+            childList: true,
+            subtree: true
+        };
+        this._timelineStructureAttributeFilter = Array.from(new Set(
+            (this.adapter.getTimelineStructureAttributeFilter?.() || []).filter(Boolean)
+        ));
+        if (this._timelineStructureAttributeFilter.length > 0) {
+            options.attributes = true;
+            options.attributeOldValue = true;
+            options.attributeFilter = this._timelineStructureAttributeFilter;
+        }
+        this.mutationObserver.observe(this.conversationContainer, options);
+    }
+
     setupObservers() {
         this.mutationObserver = new MutationObserver((mutations) => {
             /**
-             * ✅ 防御性检查：确保有实际的节点增删变化
-             * 
-             * 理论上，由于只配置了 childList: true，所有 mutation 都应该
-             * 包含 addedNodes 或 removedNodes。但作为防御性编程，
-             * 我们仍然检查以处理可能的边缘情况。
-             * 
-             * 真正的性能优化在 recalculateAndRenderMarkers() 中：
-             * 通过比较 turnId 集合来判断是否需要重建 markers。
+             * 只在用户消息节点增删时重建时间轴。
+             * ChatGPT 长对话会频繁更新按钮、代码块、流式回答等 DOM，
+             * 这些变化不改变用户提问节点，跳过可避免整页扫描和布局读取。
              */
-            const hasRelevantChange = mutations.some(m => 
-                m.type === 'childList' && 
-                (m.addedNodes.length > 0 || m.removedNodes.length > 0)
-            );
-            if (!hasRelevantChange) return;
+            if (!this.mutationTouchesUserTurns(mutations)) return;
             
             // ✅ 注意：padding 恢复逻辑已移至 scheduleScrollSync()
             // 当用户滚动时恢复 padding，而不是用定时器猜测 AI 回答是否结束
             
-            try { this.ensureContainersUpToDate(); } catch {}
+            if (!this.conversationContainer?.isConnected) {
+                try { this.ensureContainersUpToDate(); } catch {}
+            }
             this.debouncedRecalculateAndRender();
         });
-        this.mutationObserver.observe(this.conversationContainer, { childList: true, subtree: true });
+        this.observeConversationMutations();
         // Resize: update long-canvas geometry and virtualization
         // ⚠️ 注意：这里只监听时间轴自身大小变化，不需要重新计算节点位置
         // 因为时间轴大小变化不影响对话区域节点的 offsetTop
@@ -1393,24 +1267,14 @@ class TimelineManager {
             if (this.ui.toggleBtn) {
                 this.ui.toggleBtn.style.display = shouldHide ? 'none' : 'flex';
             }
+            // ChatGPT 原生 Prompt 目录可能晚于扩展挂载；出现或移除时重新计算右侧避让。
+            this.updateTimelineHeight();
         };
         
         // 立即执行一次检查
         checkAndUpdateTimelineVisibility();
         this.hideConflictingElements(conflictingSelectors);
         
-        // 使用 DOMObserverManager 监听 DOM 变化（合并为 1 个订阅）
-        if (window.DOMObserverManager) {
-            this._unsubscribeDomCheck = window.DOMObserverManager.getInstance().subscribeBody('timeline-dom-check', {
-                callback: () => {
-                    checkAndUpdateTimelineVisibility();
-                    this.hideConflictingElements(conflictingSelectors);
-                },
-                filter: { hasAddedNodes: true, hasRemovedNodes: true },
-                debounce: 300  // 300ms 防抖，降低执行频率
-            });
-        }
-
         this.setupFastTimelineVisibilityObserver(checkAndUpdateTimelineVisibility);
     }
 
@@ -1511,11 +1375,18 @@ class TimelineManager {
 
     // Ensure our conversation/scroll containers are still current after DOM replacements
     ensureContainersUpToDate() {
-        const selector = this.adapter.getUserMessageSelector();
-        const first = document.querySelector(selector);
+        const prepared = this._collectUserTurnElements({
+            scope: document,
+            forcePrepare: true,
+            reason: 'container-health-check'
+        });
+        const first = prepared.userTurnElements[0] || null;
         if (!first) return;
         
-        const newConv = this.adapter.findConversationContainer(first);
+        const newConv = this.adapter.findConversationContainer(first, {
+            messageSelector: prepared.selector,
+            userTurnElements: prepared.userTurnElements
+        });
         // ✅ 增强判断：如果新容器存在且 (新容器不等于旧容器 OR 旧容器已经断开连接)
         if (newConv && (newConv !== this.conversationContainer || !this.conversationContainer?.isConnected)) {
             // Rebind observers and listeners to the new conversation root
@@ -1538,11 +1409,6 @@ class TimelineManager {
         this._renderedNodeCount = 0;
         this._renderedNodeIds = new Set();
         
-        // ✅ 重置 ChatTimeRecorder 状态（解耦：通过全局函数调用）
-        if (typeof resetChatTimeRecorder === 'function') {
-            resetChatTimeRecorder();
-        }
-        
         // ✅ Padding 状态由 adapter.isAIGenerating() 实时控制
         this._currentPadding = 0;
 
@@ -1559,7 +1425,10 @@ class TimelineManager {
         if (!newScroll) newScroll = document.scrollingElement || document.documentElement || document.body;
         this.scrollContainer = newScroll;
         // Reattach scroll listener
-        this.onScroll = () => this.scheduleScrollSync();
+        this.onScroll = () => {
+            this.scheduleScrollSync();
+            this.scheduleScrollPositionSave();
+        };
         this.scrollContainer.addEventListener('scroll', this.onScroll, { passive: true });
 
         // Recreate IntersectionObserver with new root
@@ -1574,7 +1443,7 @@ class TimelineManager {
         this.updateIntersectionObserverTargets();
 
         // Re-observe mutations on the new conversation container
-        this.mutationObserver.observe(this.conversationContainer, { childList: true, subtree: true });
+        this.observeConversationMutations();
 
         // Force a recalc right away to rebuild markers
         this.recalculateAndRenderMarkers();
@@ -1592,12 +1461,26 @@ class TimelineManager {
         if (!this.intersectionObserver || !this.conversationContainer) return;
         this.intersectionObserver.disconnect();
         this.visibleUserTurns.clear();
-        const selector = this.adapter.getUserMessageSelector();
-        const userTurns = this.conversationContainer.querySelectorAll(selector);
+        const userTurns = this._collectUserTurnElements({
+            scope: this.conversationContainer,
+            reason: 'intersection-targets'
+        }).userTurnElements;
         userTurns.forEach(el => this.intersectionObserver.observe(el));
     }
 
     setupEventListeners() {
+        // 接口响应可能晚于初次 marker 渲染；到达后只补文本，不改变几何结构。
+        this._unsubscribeCapturedChatsData = this.adapter.subscribeCapturedChatsDataUpdated?.((detail) => {
+            if (this._destroyed) return;
+            if (!detail?.conversationId || detail.conversationId !== this.conversationId) return;
+            if (detail.rebuildMarkers) {
+                this.adapter.invalidateTimelineNodes?.('captured-data');
+                this.recalculateAndRenderMarkers();
+            } else {
+                this.refreshPlaceholderSummaries({ force: true });
+            }
+        }) || null;
+
         // ✅ 长按标记功能：长按节点切换图钉
         let longPressTimer = null;
         let longPressTarget = null;
@@ -1774,18 +1657,65 @@ class TimelineManager {
         this.ui.timelineBar.addEventListener('touchend', this.cancelLongPress);
         this.ui.timelineBar.addEventListener('touchcancel', this.cancelLongPress);
         
-        // Listen to container scroll to keep marker active state in sync
-        this.onScroll = () => this.scheduleScrollSync();
+        // Listen to container scroll to keep marker active state and reopen position in sync
+        this.onScroll = () => {
+            this.scheduleScrollSync();
+            this.scheduleScrollPositionSave();
+        };
         this.scrollContainer.addEventListener('scroll', this.onScroll, { passive: true });
+
+        this.onPotentialSendClick = (e) => {
+            const submitButton = this.adapter.getComposerSubmitButton?.();
+            if (!submitButton || !e.target) return;
+            if (e.target === submitButton || submitButton.contains?.(e.target)) {
+                this._capturePotentialMessageSendSnapshot();
+            }
+        };
+        document.addEventListener('click', this.onPotentialSendClick, true);
+
+        this.onPotentialSendKeyDown = (e) => {
+            if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+            const composerRoot = this.adapter.getComposerRoot?.();
+            if (composerRoot?.contains?.(e.target)) {
+                this._capturePotentialMessageSendSnapshot();
+            }
+        };
+        document.addEventListener('keydown', this.onPotentialSendKeyDown, true);
+
+        this.onPageHide = () => {
+            this.flushScrollPositionSave();
+        };
+        this.onBeforeUnload = () => {
+            this.flushScrollPositionSave();
+        };
+        this.onVisibilityChange = () => {
+            if (document.visibilityState === 'hidden') {
+                this.flushScrollPositionSave();
+            }
+        };
+        window.addEventListener('pagehide', this.onPageHide);
+        window.addEventListener('beforeunload', this.onBeforeUnload);
+        document.addEventListener('visibilitychange', this.onVisibilityChange);
 
         // Tooltip interactions (delegated)
         this.onTimelineBarOver = (e) => {
+            const line = e.target.closest?.('.ait-timeline-dot, .timeline-pin-marker-current');
+            if (line) this.setTimelineHoverCascade(line);
+
             const dot = e.target.closest('.ait-timeline-dot');
             if (dot) this.showTooltipForDot(dot);
         };
         
         // ✅ 需求2：修改逻辑 - 只在鼠标不是移到 tooltip 时才隐藏
         this.onTimelineBarOut = (e) => {
+            const fromLine = e.target.closest?.('.ait-timeline-dot, .timeline-pin-marker-current');
+            const toLine = e.relatedTarget?.closest?.('.ait-timeline-dot, .timeline-pin-marker-current');
+            if (fromLine && toLine) {
+                this.setTimelineHoverCascade(toLine);
+            } else if (fromLine) {
+                this.clearTimelineHoverCascade();
+            }
+
             const fromDot = e.target.closest('.ait-timeline-dot');
             const toDot = e.relatedTarget?.closest?.('.ait-timeline-dot');
             const toTooltip = e.relatedTarget?.closest?.('.timeline-tooltip');
@@ -1797,10 +1727,20 @@ class TimelineManager {
         };
         
         this.onTimelineBarFocusIn = (e) => {
+            const line = e.target.closest?.('.ait-timeline-dot, .timeline-pin-marker-current');
+            if (line) this.setTimelineHoverCascade(line);
+
             const dot = e.target.closest('.ait-timeline-dot');
             if (dot) this.showTooltipForDot(dot);
         };
         this.onTimelineBarFocusOut = (e) => {
+            const toLine = e.relatedTarget?.closest?.('.ait-timeline-dot, .timeline-pin-marker-current');
+            if (toLine) {
+                this.setTimelineHoverCascade(toLine);
+            } else {
+                this.clearTimelineHoverCascade();
+            }
+
             const dot = e.target.closest('.ait-timeline-dot');
             if (dot) this.hideTooltip();
         };
@@ -1863,13 +1803,6 @@ class TimelineManager {
         };
         this.ui.timelineBar.addEventListener('wheel', this.onTimelineWheel, { passive: false });
 
-        // AI 回复完成后，如果用户当前停留在非最后节点，提示仍有后续内容。
-        this.onAIStateChange = (event) => {
-            if (event.detail?.generating !== false) return;
-            this.scheduleAICompleteToastCheck();
-        };
-        window.addEventListener('ai:stateChange', this.onAIStateChange);
-
         // Cross-tab/cross-site star sync via chrome.storage change event
         this.onStorage = async (changes, areaName) => {
             try {
@@ -1895,17 +1828,6 @@ class TimelineManager {
                 if (changes.chatTimelineStars) {
                     // 重新加载收藏数据
                     await this.loadStars();
-
-                    // 同步收藏整个对话按钮的状态
-                    const starBtn = this.ui.starChatBtn || document.querySelector('.ait-timeline-star-chat-btn-native');
-                    if (starBtn) {
-                        const nowStarred = await this.isChatStarred();
-                        const svg = starBtn.querySelector('svg');
-                        if (svg) {
-                            svg.setAttribute('fill', nowStarred ? 'rgb(255, 125, 3)' : 'none');
-                            svg.setAttribute('stroke', nowStarred ? 'rgb(255, 125, 3)' : 'currentColor');
-                        }
-                    }
 
                     // 同步收藏状态到所有 marker
                     this.markers.forEach(marker => {
@@ -1941,14 +1863,17 @@ class TimelineManager {
                     this.arrowKeysNavigationEnabled = changes.arrowKeysNavigationEnabled.newValue !== false;
                 }
 
-                // ✅ 监听 AI 回复完成提醒状态变化
-                if (changes.timelineAICompleteToastEnabled) {
-                    this.aiCompleteToastEnabled = changes.timelineAICompleteToastEnabled.newValue !== false;
-                }
-                
                 // ✅ 监听平台设置变化
                 if (changes.timelinePlatformSettings) {
                     this.platformSettings = changes.timelinePlatformSettings.newValue || {};
+                }
+
+                if (this.autoSendImageUploadsAvailable && changes._aitAutoSendImageUploadsEnabled) {
+                    this.autoSendImageUploadsEnabled = changes._aitAutoSendImageUploadsEnabled.newValue === true;
+                    if (!this.autoSendImageUploadsEnabled) {
+                        this.clearAutoSendImageUploadPending();
+                    }
+                    this.updateAutoSendImageUploadToggleState();
                 }
 
                 // ✅ 监听时间轴激活节点颜色变化
@@ -1963,13 +1888,6 @@ class TimelineManager {
         };
         try { StorageAdapter.addChangeListener(this.onStorage); } catch {}
         
-        // ✅ 提问列表按钮点击事件
-        window.eventDelegateManager.on('click', '.ait-question-list-btn', () => {
-            if (window.questionListPopup) {
-                window.questionListPopup.toggle();
-            }
-        });
-
         // ✅ 收藏按钮点击事件（打开 Panel Modal 并显示收藏 tab）
         // 使用事件委托（解决长时间停留后事件失效问题）
         window.eventDelegateManager.on('click', '.timeline-starred-btn', () => {
@@ -1982,6 +1900,43 @@ class TimelineManager {
         window.eventDelegateManager.on('click', '.ait-temp-pin-btn', () => {
             this.toggleCurrentTemporaryPin();
         });
+
+        if (this.ui.autoSendImageUploadToggle) {
+            this.onAutoSendImageUploadsToggleClick = () => {
+                this.setAutoSendImageUploadsEnabled(!this.autoSendImageUploadsEnabled);
+            };
+            this.onAutoSendImageUploadsToggleMouseEnter = () => {
+                window.globalTooltipManager?.show(
+                    'auto-send-image-upload-toggle',
+                    'button',
+                    this.ui.autoSendImageUploadToggle,
+                    '上传图片后自动发送',
+                    { placement: 'left' }
+                );
+            };
+            this.onAutoSendImageUploadsToggleMouseLeave = () => {
+                window.globalTooltipManager?.hide();
+            };
+
+            this.ui.autoSendImageUploadToggle.addEventListener('click', this.onAutoSendImageUploadsToggleClick);
+            this.ui.autoSendImageUploadToggle.addEventListener('mouseenter', this.onAutoSendImageUploadsToggleMouseEnter);
+            this.ui.autoSendImageUploadToggle.addEventListener('mouseleave', this.onAutoSendImageUploadsToggleMouseLeave);
+        }
+
+        if (this.autoSendImageUploadsAvailable && this.adapter.getImageUploadInputSelector?.()) {
+            this.onAutoSendImageUploadChange = (e) => {
+                this.handleAutoSendImageUploadChange(e);
+            };
+            document.addEventListener('change', this.onAutoSendImageUploadChange, true);
+        }
+
+        if (this.autoSendImageUploadsAvailable) {
+            this.onAutoSendImageUploadCandidate = (e) => {
+                this.handleAutoSendImageUploadCandidateEvent(e);
+            };
+            document.addEventListener('paste', this.onAutoSendImageUploadCandidate, true);
+            document.addEventListener('drop', this.onAutoSendImageUploadCandidate, true);
+        }
         
         // ✅ 优化：监听主题变化，清空缓存
         this.setupThemeChangeListener();
@@ -1989,18 +1944,209 @@ class TimelineManager {
         // ✅ 注册依赖 Timeline 的 Panel Modal tabs
         // PanelModal 已在脚本加载时自动初始化，这里只注册需要 timeline 的 tabs
         if (typeof registerTimelineTabs === 'function') {
-            registerTimelineTabs(this);
+            Promise.resolve(registerTimelineTabs(this)).catch(error => {
+                console.error('[TimelineManager] Failed to register panel tabs:', error);
+            });
         }
-        
+
         // ✅ 挂载到 window 以便其他模块访问
         window.timelineManager = this;
-        
+
         // ✅ 初始化时间记录器（解耦模块，确保 adapter 已就绪）
         if (typeof initChatTimeRecorder === 'function') {
             initChatTimeRecorder();
         }
     }
-    
+
+    async loadAutoSendImageUploadsState() {
+        if (!this.autoSendImageUploadsAvailable) {
+            this.autoSendImageUploadsEnabled = false;
+            return;
+        }
+        try {
+            const result = await chrome.storage.local.get('_aitAutoSendImageUploadsEnabled');
+            this.autoSendImageUploadsEnabled = result._aitAutoSendImageUploadsEnabled === true;
+        } catch (e) {
+            this.autoSendImageUploadsEnabled = false;
+        }
+    }
+
+    async setAutoSendImageUploadsEnabled(enabled) {
+        this.autoSendImageUploadsEnabled = this.autoSendImageUploadsAvailable && enabled === true;
+        if (!this.autoSendImageUploadsEnabled) {
+            this.clearAutoSendImageUploadPending();
+        }
+        this.updateAutoSendImageUploadToggleState();
+
+        try {
+            if (typeof StorageAdapter !== 'undefined' && StorageAdapter?.set) {
+                await StorageAdapter.set('_aitAutoSendImageUploadsEnabled', this.autoSendImageUploadsEnabled);
+            } else {
+                await chrome.storage.local.set({ _aitAutoSendImageUploadsEnabled: this.autoSendImageUploadsEnabled });
+            }
+        } catch (e) {
+            // UI state stays in memory even if persistence fails.
+        }
+    }
+
+    updateAutoSendImageUploadToggleState() {
+        const toggle = this.ui?.autoSendImageUploadToggle;
+        if (!toggle) return;
+        const checked = this.autoSendImageUploadsEnabled === true;
+        toggle.setAttribute('aria-checked', checked ? 'true' : 'false');
+        toggle.classList.toggle('active', checked);
+    }
+
+    handleAutoSendImageUploadChange(e) {
+        if (!this.autoSendImageUploadsAvailable || !this.autoSendImageUploadsEnabled || this._destroyed) return false;
+
+        const input = e?.target;
+        const selector = this.adapter.getImageUploadInputSelector?.();
+        if (!input || !selector || !this.isAutoSendImageUploadInput(input, selector)) {
+            return false;
+        }
+
+        if (!this.filesContainImage(input.files)) {
+            return false;
+        }
+
+        this.queueAutoSendImageUpload();
+        return true;
+    }
+
+    handleAutoSendImageUploadCandidateEvent(e) {
+        if (!this.autoSendImageUploadsAvailable || !this.autoSendImageUploadsEnabled || this._destroyed) return false;
+
+        const files = this.getImageUploadFilesFromEvent(e);
+        if (!this.filesContainImage(files)) {
+            return false;
+        }
+
+        this.queueAutoSendImageUpload();
+        return true;
+    }
+
+    getImageUploadFilesFromEvent(e) {
+        const source = e?.clipboardData || e?.dataTransfer;
+        const directFiles = Array.from(source?.files || []);
+        if (directFiles.length > 0) return directFiles;
+
+        return Array.from(source?.items || [])
+            .filter(item => item?.kind === 'file')
+            .map(item => {
+                try {
+                    return item.getAsFile?.();
+                } catch (error) {
+                    return null;
+                }
+            })
+            .filter(Boolean);
+    }
+
+    isAutoSendImageUploadInput(input, selector) {
+        try {
+            return input.matches?.(selector) === true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    filesContainImage(files) {
+        return Array.from(files || []).some(file => this.isImageFile(file));
+    }
+
+    isImageFile(file) {
+        const type = String(file?.type || '').toLowerCase();
+        if (type.startsWith('image/')) return true;
+
+        const name = String(file?.name || '').toLowerCase();
+        return /\.(avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/.test(name);
+    }
+
+    queueAutoSendImageUpload() {
+        this._pendingAutoSendImageUpload = {
+            createdAt: Date.now(),
+            wasReadyAtStart: this.isAutoSendImageUploadReady(),
+        };
+        this.scheduleAutoSendImageUploadCheck(this.AUTO_SEND_IMAGE_UPLOAD_INITIAL_DELAY);
+    }
+
+    scheduleAutoSendImageUploadCheck(delay = this.AUTO_SEND_IMAGE_UPLOAD_CHECK_DELAY) {
+        this._autoSendImageUploadTimer = TimelineUtils.clearTimerSafe(this._autoSendImageUploadTimer);
+        this._autoSendImageUploadTimer = setTimeout(() => {
+            this._autoSendImageUploadTimer = null;
+            this.tryAutoSendImageUpload();
+        }, delay);
+    }
+
+    tryAutoSendImageUpload() {
+        const pending = this._pendingAutoSendImageUpload;
+        if (!pending || this._destroyed || !this.autoSendImageUploadsEnabled) {
+            this.clearAutoSendImageUploadPending();
+            return false;
+        }
+
+        if (Date.now() - pending.createdAt > this.AUTO_SEND_IMAGE_UPLOAD_TIMEOUT) {
+            this.clearAutoSendImageUploadPending();
+            return false;
+        }
+
+        const isReady = this.isAutoSendImageUploadReady();
+
+        const hasAttachment = this.hasAutoSendImageUploadAttachment();
+        const needsAttachmentEvidence = pending.wasReadyAtStart === true;
+
+        if (!isReady || (needsAttachmentEvidence && !hasAttachment)) {
+            this.scheduleAutoSendImageUploadCheck();
+            return false;
+        }
+
+        if (typeof this.adapter.sendImageUploadMessage !== 'function') {
+            this.clearAutoSendImageUploadPending();
+            return false;
+        }
+
+        let sent = false;
+        try {
+            sent = this.adapter.sendImageUploadMessage() === true;
+        } catch (e) {
+            sent = false;
+        }
+
+        if (sent) {
+            this.clearAutoSendImageUploadPending();
+            return true;
+        }
+
+        this.scheduleAutoSendImageUploadCheck();
+        return false;
+    }
+
+    isAutoSendImageUploadReady() {
+        try {
+            return this.adapter.isImageUploadReadyToSend?.() === true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    hasAutoSendImageUploadAttachment() {
+        if (typeof this.adapter.hasImageUploadAttachment !== 'function') {
+            return true;
+        }
+
+        try {
+            return this.adapter.hasImageUploadAttachment() === true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    clearAutoSendImageUploadPending() {
+        this._autoSendImageUploadTimer = TimelineUtils.clearTimerSafe(this._autoSendImageUploadTimer);
+        this._pendingAutoSendImageUpload = null;
+    }
+
     /**
      * ✅ 同步深色模式状态到 html 元素
      * 使用 data-timeline-theme 属性，避免与 detectDarkMode() 的检测冲突
@@ -2008,14 +2154,14 @@ class TimelineManager {
     syncDarkModeClass() {
         const isDarkMode = this.adapter.detectDarkMode?.() || false;
         const htmlElement = document.documentElement;
-        
+
         if (isDarkMode) {
             htmlElement.setAttribute('data-timeline-theme', 'dark');
         } else {
             htmlElement.setAttribute('data-timeline-theme', 'light');
         }
     }
-    
+
     /**
      * ✅ 优化：设置主题变化监听器
      * 当主题切换时，重新缓存 CSS 变量并清空截断缓存
@@ -2028,14 +2174,14 @@ class TimelineManager {
                 this.onThemeChange();
             });
         }
-        
+
         // 监听系统主题变化（prefers-color-scheme）
         try {
             const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
             const mediaQueryHandler = () => {
                 this.onThemeChange();
             };
-            
+
             // 使用现代 API（如果支持）
             if (mediaQuery.addEventListener) {
                 mediaQuery.addEventListener('change', mediaQueryHandler);
@@ -2043,14 +2189,14 @@ class TimelineManager {
                 // 降级到旧 API
                 mediaQuery.addListener(mediaQueryHandler);
             }
-            
+
             // 保存引用以便在 destroy 时清理
             this.mediaQuery = mediaQuery;
             this.mediaQueryHandler = mediaQueryHandler;
         } catch (e) {
         }
     }
-    
+
     /**
      * ✅ 优化：主题变化处理
      */
@@ -2059,13 +2205,349 @@ class TimelineManager {
         requestAnimationFrame(() => {
             // ✅ 同步深色模式类
             this.syncDarkModeClass();
-            
+
             // 重新缓存 CSS 变量
             this.cacheTooltipConfig();
-            
+
             // 清空截断缓存（因为颜色/字体可能变化）
             this.truncateCache.clear();
         });
+    }
+
+    _getScrollTop() {
+        if (!this.scrollContainer) return 0;
+        if (this.scrollContainer === window) {
+            return window.scrollY || document.documentElement?.scrollTop || document.body?.scrollTop || 0;
+        }
+        return this.scrollContainer.scrollTop || 0;
+    }
+
+    getScrollPositionStorageKey(url = location.href) {
+        const urlWithoutProtocol = String(url || '').replace(/^https?:\/\//, '');
+        return `chatTimelineScrollPosition:${urlWithoutProtocol}`;
+    }
+
+    getCurrentUrlWithoutProtocol() {
+        return location.href.replace(/^https?:\/\//, '');
+    }
+
+    createScrollPositionSnapshot() {
+        if (!this.scrollContainer) return false;
+
+        const scrollTop = this._getScrollTop();
+        if (!Number.isFinite(scrollTop)) return false;
+
+        const urlWithoutProtocol = this.getCurrentUrlWithoutProtocol();
+        return {
+            key: this.getScrollPositionStorageKey(),
+            value: {
+                url: location.href,
+                urlWithoutProtocol,
+                scrollTop,
+                timestamp: Date.now(),
+            },
+        };
+    }
+
+    requestScrollPositionSave() {
+        if (typeof StorageAdapter === 'undefined' || typeof StorageAdapter.set !== 'function') return false;
+
+        const snapshot = this.createScrollPositionSnapshot();
+        if (!snapshot) return false;
+
+        try {
+            Promise.resolve(StorageAdapter.set(snapshot.key, snapshot.value)).catch(() => {});
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    scheduleScrollPositionSave() {
+        if (this.scrollPositionSaveTimer !== null) {
+            try { clearTimeout(this.scrollPositionSaveTimer); } catch {}
+        }
+
+        this.scrollPositionSaveTimer = setTimeout(() => {
+            this.scrollPositionSaveTimer = null;
+            this.requestScrollPositionSave();
+        }, this.SCROLL_POSITION_SAVE_DELAY);
+    }
+
+    flushScrollPositionSave() {
+        if (this.scrollPositionSaveTimer !== null) {
+            try { clearTimeout(this.scrollPositionSaveTimer); } catch {}
+            this.scrollPositionSaveTimer = null;
+        }
+
+        return this.requestScrollPositionSave();
+    }
+
+    async saveScrollPosition() {
+        if (typeof StorageAdapter === 'undefined' || typeof StorageAdapter.set !== 'function') return false;
+
+        const snapshot = this.createScrollPositionSnapshot();
+        if (!snapshot) return false;
+
+        try {
+            await StorageAdapter.set(snapshot.key, snapshot.value);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    async restoreSavedScrollPosition() {
+        if (this._savedScrollPositionRestored) return false;
+        if (!this.scrollContainer) return false;
+        if (typeof StorageAdapter === 'undefined' || typeof StorageAdapter.get !== 'function') return false;
+
+        this._savedScrollPositionRestored = true;
+
+        try {
+            const saved = await StorageAdapter.get(this.getScrollPositionStorageKey());
+            if (!saved || typeof saved !== 'object') return false;
+
+            const scrollTop = Number(saved.scrollTop);
+            if (!Number.isFinite(scrollTop)) return false;
+
+            this.setScrollTop(scrollTop);
+            this.scheduleScrollSync?.();
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    setScrollTop(scrollTop) {
+        if (!this.scrollContainer || !Number.isFinite(scrollTop)) return false;
+
+        if (this.scrollContainer === window) {
+            try {
+                window.scrollTo(0, scrollTop);
+            } catch {}
+        } else {
+            this.scrollContainer.scrollTop = scrollTop;
+        }
+        return true;
+    }
+
+    async handleInitialNavigationOrRestore(findMarkerByNodeKey) {
+        if (this._initialNavigationHandled) return false;
+        this._initialNavigationHandled = true;
+
+        const navigateToStoredNode = (nodeKey) => {
+            const marker = findMarkerByNodeKey?.(nodeKey);
+            if (!marker?.element) return false;
+
+            setTimeout(() => {
+                this.smoothScrollTo(marker.element);
+            }, 500);
+            return true;
+        };
+
+        try {
+            const nodeKey = await this.getNavigateData('targetIndex');
+            if (navigateToStoredNode(nodeKey)) return true;
+        } catch {}
+
+        try {
+            const nodeKey = await this.checkCrossSiteNavigate();
+            if (navigateToStoredNode(nodeKey)) return true;
+        } catch {}
+
+        return this.restoreSavedScrollPosition();
+    }
+
+    _createScrollSnapshot() {
+        if (!this.scrollContainer || !this.markers?.length) return null;
+        const activeId = this.pendingActiveId || this.activeTurnId;
+        const activeIndex = this.markers.findIndex(marker => marker.id === activeId);
+        const totalCount = this.markers.length;
+        return {
+            scrollTop: this._getScrollTop(),
+            activeIndex,
+            totalCount,
+            isLast: activeIndex === totalCount - 1,
+            timestamp: Date.now(),
+        };
+    }
+
+    _recordScrollSnapshot() {
+        const snapshot = this._createScrollSnapshot();
+        if (!snapshot) return;
+
+        const previousSnapshot = this._lastScrollSnapshot;
+        const totalCount = snapshot.totalCount;
+
+        if (this._isUsablePreBottomSnapshot(snapshot, totalCount)) {
+            this._lastPreBottomScrollSnapshot = snapshot;
+        } else if (
+            snapshot.isLast &&
+            this._isUsablePreBottomSnapshot(previousSnapshot, totalCount) &&
+            Math.abs(snapshot.scrollTop - previousSnapshot.scrollTop) >= this.AUTO_BOTTOM_JUMP_MIN_DELTA
+        ) {
+            this._lastPreBottomScrollSnapshot = previousSnapshot;
+        }
+
+        this._lastScrollSnapshot = snapshot;
+    }
+
+    _capturePotentialMessageSendSnapshot() {
+        if (this.adapter?.isReverseScroll?.()) return false;
+
+        const snapshot = this._createScrollSnapshot();
+        if (!snapshot) return false;
+
+        this._pendingMessageSendSnapshot = snapshot;
+        return this._isUsablePreBottomSnapshot(snapshot, snapshot.totalCount);
+    }
+
+    _isUsablePreBottomSnapshot(snapshot, previousCount) {
+        return !!snapshot &&
+            Number.isFinite(snapshot.scrollTop) &&
+            snapshot.totalCount === previousCount &&
+            snapshot.isLast === false &&
+            snapshot.activeIndex >= 0 &&
+            snapshot.activeIndex < previousCount - 1;
+    }
+
+    _captureAutoBottomJumpCandidate(previousCount, currentCount) {
+        if (!this.scrollContainer || !this.markers?.length) return false;
+        if (currentCount <= previousCount || previousCount <= 0) return false;
+        if (this.adapter?.isReverseScroll?.()) return false;
+
+        const currentActiveIndex = this.markers.findIndex(marker => marker.id === this.activeTurnId);
+        const snapshot = this._lastScrollSnapshot;
+        const now = Date.now();
+        const sendSnapshot = this._pendingMessageSendSnapshot;
+        const sendSnapshotIsRecent =
+            sendSnapshot &&
+            sendSnapshot.totalCount === previousCount &&
+            now - sendSnapshot.timestamp <= this.AUTO_BOTTOM_JUMP_SEND_SNAPSHOT_MS;
+        const sendSnapshotUsable =
+            sendSnapshotIsRecent &&
+            this._isUsablePreBottomSnapshot(sendSnapshot, previousCount);
+        const sendSnapshotBlocksFallback =
+            sendSnapshotIsRecent &&
+            sendSnapshot.isLast === true;
+
+        if (sendSnapshot && !sendSnapshotIsRecent) {
+            this._pendingMessageSendSnapshot = null;
+        }
+
+        if (sendSnapshotBlocksFallback) {
+            this._pendingMessageSendSnapshot = null;
+            return false;
+        }
+
+        const snapshotUsable = this._isUsablePreBottomSnapshot(snapshot, previousCount);
+        const preBottomSnapshot = this._lastPreBottomScrollSnapshot;
+        const overwrittenSnapshotUsable =
+            !snapshotUsable &&
+            this._isUsablePreBottomSnapshot(preBottomSnapshot, previousCount) &&
+            snapshot?.isLast === true &&
+            snapshot.totalCount === previousCount &&
+            Number.isFinite(snapshot.scrollTop) &&
+            now - snapshot.timestamp <= this.AUTO_BOTTOM_JUMP_PRE_SNAPSHOT_MS &&
+            Math.abs(snapshot.scrollTop - preBottomSnapshot.scrollTop) >= this.AUTO_BOTTOM_JUMP_MIN_DELTA;
+
+        const activeWasBeforeLast = currentActiveIndex >= 0 && currentActiveIndex < this.markers.length - 1;
+        if (!sendSnapshotUsable && !snapshotUsable && !overwrittenSnapshotUsable && !activeWasBeforeLast) return false;
+
+        const capturedScrollTop = sendSnapshotUsable
+            ? sendSnapshot.scrollTop
+            : snapshotUsable
+                ? snapshot.scrollTop
+                : overwrittenSnapshotUsable
+                    ? preBottomSnapshot.scrollTop
+                    : this._getScrollTop();
+        if (!Number.isFinite(capturedScrollTop)) return false;
+
+        this.pendingAutoBottomJump = {
+            scrollTop: Math.max(0, capturedScrollTop),
+            previousCount,
+            currentCount,
+            createdAt: now,
+            expiresAt: now + this.AUTO_BOTTOM_JUMP_PENDING_MS,
+        };
+        if (overwrittenSnapshotUsable) {
+            this._lastPreBottomScrollSnapshot = null;
+        }
+        if (sendSnapshotIsRecent) {
+            this._pendingMessageSendSnapshot = null;
+        }
+        return true;
+    }
+
+    _maybeApplyPendingAutoBottomJumpPin() {
+        const pending = this.pendingAutoBottomJump;
+        if (!pending) return false;
+
+        if (!this.scrollContainer || !this.markers?.length) {
+            this.pendingAutoBottomJump = null;
+            return false;
+        }
+
+        if (pending.expiresAt && Date.now() > pending.expiresAt) {
+            this.pendingAutoBottomJump = null;
+            return false;
+        }
+
+        const activeId = this.pendingActiveId || this.activeTurnId;
+        const activeIndex = this.markers.findIndex(marker => marker.id === activeId);
+        if (activeIndex !== this.markers.length - 1) return false;
+
+        const currentScrollTop = this._getScrollTop();
+        if (Math.abs(currentScrollTop - pending.scrollTop) < this.AUTO_BOTTOM_JUMP_MIN_DELTA) {
+            return false;
+        }
+
+        this.pendingAutoBottomJump = null;
+
+        if (this.temporaryPin) {
+            return this._showAutoBottomJumpFlashCandidate(pending.scrollTop);
+        }
+
+        return this.setTemporaryPinAtScrollTop(pending.scrollTop);
+    }
+
+    _showAutoBottomJumpFlashCandidate(scrollTop, durationMs = this.AUTO_BOTTOM_JUMP_CONFIRM_MS) {
+        if (!this.ui?.trackContent || !Number.isFinite(scrollTop)) return false;
+
+        this._clearAutoBottomJumpFlashCandidate();
+
+        const pinMarker = document.createElement('button');
+        pinMarker.className = 'timeline-pin-marker timeline-pin-marker-flash';
+        pinMarker.type = 'button';
+        pinMarker.setAttribute('aria-label', chrome.i18n.getMessage('useNewReturnPoint') || 'Use new return point');
+        pinMarker.style.setProperty('--timeline-pin-y', `${this.getTemporaryPinTrackY(scrollTop)}px`);
+
+        pinMarker.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._clearAutoBottomJumpFlashCandidate();
+            this.setTemporaryPinAtScrollTop(scrollTop);
+        });
+
+        this.ui.trackContent.appendChild(pinMarker);
+        this.autoBottomJumpFlashMarker = pinMarker;
+        this.autoBottomJumpFlashTimer = setTimeout(() => {
+            this._clearAutoBottomJumpFlashCandidate();
+        }, durationMs);
+        return true;
+    }
+
+    _clearAutoBottomJumpFlashCandidate() {
+        if (this.autoBottomJumpFlashTimer !== null) {
+            try { clearTimeout(this.autoBottomJumpFlashTimer); } catch {}
+            this.autoBottomJumpFlashTimer = null;
+        }
+
+        if (this.autoBottomJumpFlashMarker) {
+            try { TimelineUtils.removeElementSafe?.(this.autoBottomJumpFlashMarker); } catch {}
+            try { this.autoBottomJumpFlashMarker.remove?.(); } catch {}
+            this.autoBottomJumpFlashMarker = null;
+        }
     }
     
     async toggleCurrentTemporaryPin() {
@@ -2081,9 +2563,77 @@ class TimelineManager {
         const btn = this.ui?.tempPinBtn;
         if (!btn) return;
 
-        const hasPin = !!this.temporaryPin;
-        btn.classList.toggle('active', hasPin);
-        btn.setAttribute('aria-pressed', hasPin ? 'true' : 'false');
+        btn.classList.remove('active');
+        btn.removeAttribute('aria-pressed');
+        btn.setAttribute('aria-label', chrome.i18n.getMessage('pinChatAction') || 'Pin chat');
+    }
+
+    clearTimelineHoverCascade() {
+        this.ui?.timelineBar
+            ?.querySelectorAll('.timeline-neighbor-1, .timeline-neighbor-2')
+            .forEach(line => line.classList.remove('timeline-neighbor-1', 'timeline-neighbor-2'));
+    }
+
+    /**
+     * 按时间轴上的真实槽位顺序扩展相邻刻度。
+     * Pin 是独立槽位，因此黄色线与问题线使用同一套邻近关系。
+     */
+    setTimelineHoverCascade(target) {
+        this.clearTimelineHoverCascade();
+        if (!target || !this.ui?.timelineBar) return false;
+
+        const entries = [];
+        this.markers.forEach((marker, index) => {
+            const element = marker.dotElement;
+            if (!element || !this.ui.timelineBar.contains(element)) return;
+            const y = Number(this.yPositions?.[index]);
+            if (Number.isFinite(y)) entries.push({ element, y });
+        });
+
+        const pinElement = this.ui.timelineBar.querySelector('.timeline-pin-marker-current');
+        const pinY = Number(this.temporaryPin?.trackY);
+        if (pinElement && Number.isFinite(pinY)) {
+            entries.push({ element: pinElement, y: pinY });
+        }
+
+        entries.sort((a, b) => a.y - b.y);
+        const targetIndex = entries.findIndex(entry => entry.element === target);
+        if (targetIndex === -1) return false;
+
+        for (const distance of [1, 2]) {
+            const className = `timeline-neighbor-${distance}`;
+            entries[targetIndex - distance]?.element.classList.add(className);
+            entries[targetIndex + distance]?.element.classList.add(className);
+        }
+        return true;
+    }
+
+    setPinNavigationActive(active) {
+        const nextActive = !!active && !!this.temporaryPin;
+        this.pinNavigationActive = nextActive;
+        this.ui?.timelineBar?.classList.toggle('ait-pin-location-active', nextActive);
+
+        const pinMarker = this.ui?.timelineBar?.querySelector('.timeline-pin-marker-current');
+        if (nextActive) {
+            pinMarker?.setAttribute('aria-current', 'location');
+        } else {
+            pinMarker?.removeAttribute?.('aria-current');
+        }
+        return nextActive;
+    }
+
+    syncPinNavigationState() {
+        if (!this.pinNavigationActive) return false;
+        const currentScrollTop = Number(this.scrollContainer?.scrollTop);
+        if (
+            !this.temporaryPin ||
+            !Number.isFinite(currentScrollTop) ||
+            Math.abs(currentScrollTop - this.temporaryPin.scrollTop) > this.PIN_NAVIGATION_TOLERANCE
+        ) {
+            this.setPinNavigationActive(false);
+            return false;
+        }
+        return true;
     }
 
     getTemporaryPinVisualN(scrollTop) {
@@ -2095,8 +2645,61 @@ class TimelineManager {
         return Math.max(0, Math.min(1, Math.round(n * 1000000) / 1000000));
     }
 
+    /**
+     * Pin 只表示位于哪两个问题之间，不再表示区间内的百分比。
+     * 返回值是独立槽位索引：0 在第一个问题前，N 在最后一个问题后。
+     */
+    getTemporaryPinSlotIndex(scrollTop, sourceMarkerId = this.temporaryPin?.sourceMarkerId) {
+        const markerCount = this.markers.length;
+        if (markerCount === 0) return 0;
+
+        if (sourceMarkerId) {
+            const markerIndex = this.markers.findIndex(marker => marker.id === sourceMarkerId);
+            if (markerIndex >= 0) return Math.min(markerCount, markerIndex + 1);
+        }
+
+        const scrollOffset = this.adapter?.getScrollOffset?.() ?? 0;
+        const contentOffset = scrollTop + scrollOffset;
+        const hasUsableOffsets = this.markers.every(marker => Number.isFinite(Number(marker.offsetTop)));
+        if (hasUsableOffsets) {
+            const nextMarkerIndex = this.markers.findIndex(marker => Number(marker.offsetTop) > contentOffset);
+            return nextMarkerIndex === -1 ? markerCount : nextMarkerIndex;
+        }
+
+        return Math.max(0, Math.min(markerCount, Math.round(this.getTemporaryPinVisualN(scrollTop) * markerCount)));
+    }
+
+    getTemporaryPinTrackY(scrollTop, sourceMarkerId = this.temporaryPin?.sourceMarkerId) {
+        if (
+            this.temporaryPin &&
+            this.temporaryPin.scrollTop === scrollTop &&
+            this.temporaryPin.sourceMarkerId === sourceMarkerId &&
+            Number.isFinite(this.temporaryPin.trackY)
+        ) {
+            return this.temporaryPin.trackY;
+        }
+
+        const slotIndex = this.getTemporaryPinSlotIndex(scrollTop, sourceMarkerId);
+        const markerCount = this.markers.length;
+        let gap = 12;
+        try { gap = this.getCompactGap(); } catch {}
+
+        if (this.yPositions?.length === markerCount && markerCount > 0) {
+            if (slotIndex <= 0) return this.yPositions[0] - gap;
+            if (slotIndex >= markerCount) return this.yPositions[markerCount - 1] + gap;
+            return (this.yPositions[slotIndex - 1] + this.yPositions[slotIndex]) / 2;
+        }
+
+        let pad = 0;
+        try { pad = this.getTrackPadding(); } catch {}
+        return pad + slotIndex * gap;
+    }
+
     setTemporaryPinAtScrollTop(scrollTop, sourceMarkerId = null) {
         if (!Number.isFinite(scrollTop)) return false;
+
+        this._clearAutoBottomJumpFlashCandidate();
+        this.setPinNavigationActive(false);
 
         this.markers.forEach(marker => {
             marker.pinned = false;
@@ -2115,12 +2718,19 @@ class TimelineManager {
             this.pinned.add(sourceMarkerId);
         }
 
-        this.renderPinMarkers();
+        if (this.ui?.wrapper && this.ui?.trackContent) {
+            this.updateTimelineGeometry();
+        } else {
+            this.temporaryPin.trackY = this.getTemporaryPinTrackY(scrollTop, sourceMarkerId);
+            this.renderPinMarkers();
+        }
         this.updateTempPinButtonState();
         return true;
     }
 
     clearTemporaryPin() {
+        this._clearAutoBottomJumpFlashCandidate();
+        this.setPinNavigationActive(false);
         this.temporaryPin = null;
         this.markers.forEach(marker => {
             marker.pinned = false;
@@ -2128,7 +2738,11 @@ class TimelineManager {
         });
         this.pinned.clear();
         this.pinnedIndexes.clear();
-        this.renderPinMarkers();
+        if (this.ui?.wrapper && this.ui?.trackContent) {
+            this.updateTimelineGeometry();
+        } else {
+            this.renderPinMarkers();
+        }
         this.updateTempPinButtonState();
     }
 
@@ -2151,7 +2765,8 @@ class TimelineManager {
         
         const marker = this.markers[targetIndex];
         if (!marker?.element) return false;
-        
+
+        this.setPinNavigationActive(false);
         this.smoothScrollTo(marker.element);
         return true;
     }
@@ -2174,7 +2789,7 @@ class TimelineManager {
     
     smoothScrollTo(targetElement, duration = 600) {
         if (!targetElement || !this.scrollContainer) return;
-        
+
         this._recalcMarkerPositions();
         
         const scrollOffset = this.adapter?.getScrollOffset?.() ?? 30;
@@ -2183,7 +2798,7 @@ class TimelineManager {
         // 计算初始目标位置
         const getTargetPosition = () => {
             const containerRect = this.scrollContainer.getBoundingClientRect();
-            const targetRect = targetElement.getBoundingClientRect();
+            const targetRect = this._getMessageRect(targetElement);
             return targetRect.top - containerRect.top + this.scrollContainer.scrollTop - scrollOffset;
         };
         
@@ -2254,29 +2869,16 @@ class TimelineManager {
      * ✅ 获取紧凑模式的默认间距
      */
     getCompactGap() {
-        if (!this.ui.timelineBar) return 30;
-        return this.getCSSVarNumber(this.ui.timelineBar, '--timeline-compact-gap', 30);
+        if (!this.ui.timelineBar) return 12;
+        return this.getCSSVarNumber(this.ui.timelineBar, '--timeline-compact-gap', 12);
     }
 
     /**
-     * ✅ 判断是否应该使用紧凑模式
-     * 简单逻辑：平均空间 = 时间轴高度 / 节点数
-     * 平均空间 < 40px → 切换到紧凑模式
-     * 平均空间 > 45px → 切换回正常模式
-     * 40-45px 之间 → 保持当前模式（滞后区间）
+     * 横线时间线始终使用紧凑的顺序布局。
+     * 旧的按文档比例铺满视口模式会让少量提问彼此离得过远。
      */
     shouldBeCompactMode() {
-        const N = this.markers.length;
-        if (N === 0) return false;
-        
-        const barHeight = this.ui.timelineBar?.clientHeight || 0;
-        if (barHeight <= 0) return false;
-        
-        const avgSpace = barHeight / N;
-        
-        // 滞后阈值，防止频繁切换
-        const threshold = this.isCompactMode ? 45 : 40;
-        return avgSpace < threshold;
+        return this.markers.length > 0;
     }
 
     /**
@@ -2351,37 +2953,27 @@ class TimelineManager {
     // Lightweight correction: map cached n -> pixel, apply min-gap, write back updated n
     reapplyMinGapAfterResize() {
         if (!this.ui.timelineBar || !this.ui.trackContent || this.markers.length === 0) return;
-        
-        const trackPadding = this.getTrackPadding();
-        const minGap = this.getMinGap();
-        const N = this.markers.length;
-        
-        // ✅ 使用实际内容高度，确保有足够空间容纳所有节点的最小间距
-        const barHeight = this.ui.timelineBar.clientHeight || 0;
-        const requiredHeight = 2 * trackPadding + Math.max(0, N - 1) * minGap;
-        const contentHeight = Math.max(barHeight, requiredHeight);
-        
-        // 更新 trackContent 高度
-        try { this.ui.trackContent.style.height = `${contentHeight}px`; } catch {}
-        
-        const usable = Math.max(1, contentHeight - 2 * trackPadding);
-        const minTop = trackPadding;
-        const maxTop = trackPadding + usable;
-        
-        // Use cached normalized positions (default 0)
-        // ✅ 使用 visualN（圆点定位）而不是 n（激活判断）
-        const desired = this.markers.map(m => {
-            const vn = Math.max(0, Math.min(1, (m.visualN ?? 0)));
-            return minTop + vn * usable;
+        this.updateTimelineGeometry();
+        this.syncTimelineTrackToMain();
+        this.updateVirtualRangeAndRender();
+    }
+
+    /** 用适配器的最新缓存补齐尚未加载的提问文本。 */
+    refreshPlaceholderSummaries({ force = false } = {}) {
+        let updatedCount = 0;
+        this.markers.forEach(marker => {
+            const previous = String(marker.summary || '').trim();
+            if (!force && !this.adapter.isPlaceholderSummary?.(previous)) return;
+
+            try {
+                const fresh = String(this.adapter.extractText(marker.element) || '').trim();
+                if (!fresh || this.adapter.isPlaceholderSummary?.(fresh) || fresh === previous) return;
+                marker.summary = fresh;
+                marker.dotElement?.setAttribute('aria-label', fresh);
+                updatedCount++;
+            } catch {}
         });
-        const adjusted = this.applyMinGap(desired, minTop, maxTop, minGap);
-        for (let i = 0; i < this.markers.length; i++) {
-            const top = adjusted[i];
-            const vn = (top - minTop) / Math.max(1, usable);
-            // ✅ 存储到 dotN（用于圆点 CSS 定位）
-            this.markers[i].dotN = Math.max(0, Math.min(1, vn));
-            try { this.markers[i].dotElement?.style.setProperty('--n', String(this.markers[i].dotN)); } catch {}
-        }
+        return updatedCount;
     }
 
     /**
@@ -2391,154 +2983,37 @@ class TimelineManager {
         if (!dot) return;
         
         const id = 'node-' + (dot.dataset.targetTurnId || '');
-        const messageText = (dot.getAttribute('aria-label') || '').trim();
+        let messageText = (dot.getAttribute('aria-label') || '').trim();
+        if (this.adapter.isPlaceholderSummary?.(messageText)) {
+            this.refreshPlaceholderSummaries();
+            messageText = (dot.getAttribute('aria-label') || '').trim();
+        }
         
-        // 构建内容元素（包含交互逻辑）
+        // 时间线预览只承担“识别提问”的职责，不混入时间、回答或操作按钮。
         const contentElement = this._buildNodeTooltipElement(dot, messageText);
         
         window.globalTooltipManager.show(id, 'node', dot, {
             element: contentElement
         }, {
-            placement: 'auto',
-            maxWidth: 288  // ✅ 使用固定值（与 CSS 中的默认值一致）
+            placement: 'left',
+            maxWidth: 320,
+            gap: 10,
+            allowHover: false,
+            noArrow: true
         });
     }
     
     /**
-     * ✅ 构建节点 tooltip 元素（包含完整交互逻辑）
+     * 构建仅包含提问文本的节点预览。
      */
     _buildNodeTooltipElement(dot, messageText) {
-        // 计算位置信息
-        const p = this.computePlacementInfo(dot);
-        
-        // 截断文本
-        const layout = this.truncateToFiveLines(messageText, p.width, true);
-        
-        // 检查是否收藏
-        const id = dot.dataset.targetTurnId;
-        const isStarred = id && this.starred.has(id);
-        
-        // 创建容器（垂直：内容区在上 + 操作区在下）
         const container = document.createElement('div');
         container.className = 'timeline-tooltip-container';
-        
-        // 内容区（垂直：时间在上 + 文字在下）
-        const contentWrap = document.createElement('div');
-        contentWrap.className = 'timeline-tooltip-content-wrap';
-        
-        // 时间标签（从节点 DOM 读取）
-        const marker = this.markerMap.get(id);
-        const timeTarget = marker?.element
-            ? (this.adapter.getTimeLabelTarget?.(marker.element) || marker.element)
-            : null;
-        const timeStr = marker?.timeLabel
-            || timeTarget?.getAttribute('data-ait-time')
-            || marker?.element?.querySelector?.('[data-ait-time]')?.getAttribute('data-ait-time')
-            || marker?.element?.getAttribute('data-ait-time');
-        if (timeStr) {
-            const timeTag = document.createElement('span');
-            timeTag.className = 'timeline-tooltip-time';
-            timeTag.textContent = timeStr;
-            contentWrap.appendChild(timeTag);
-        }
-        
-        // 创建内容区
+
         const content = document.createElement('div');
         content.className = 'timeline-tooltip-content';
-        content.textContent = layout.text;
-        
-        // ✅ 添加点击复制功能
-        content.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.copyToClipboard(messageText, content);
-        });
-        
-        // 底部操作区（图钉 + 星标，水平排列）
-        const supportsTimelineTooltipActions = this.getTimelineFeatures()?.timeline_tooltipActions === true;
-        let actions = null;
-        if (supportsTimelineTooltipActions) {
-            actions = document.createElement('div');
-            actions.className = 'timeline-tooltip-actions';
-
-            // 创建图钉图标
-            const isPinned = id && this.pinned.has(id);
-            const pinSpan = document.createElement('span');
-            pinSpan.className = 'timeline-tooltip-pin';
-            pinSpan.dataset.targetTurnId = id;
-            if (!isPinned) pinSpan.classList.add('not-pinned');
-            pinSpan.dataset.tip = isPinned
-                ? (chrome.i18n.getMessage('unpinAction') || '取消标记重点')
-                : (chrome.i18n.getMessage('pinAction') || '标记重点');
-            pinSpan.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                window.globalTooltipManager.hideOverlay();
-                const turnId = pinSpan.dataset.targetTurnId;
-                const ok = await this.togglePin(turnId);
-                if (ok) {
-                    const nowPinned = this.pinned.has(turnId);
-                    pinSpan.classList.toggle('not-pinned', !nowPinned);
-                    pinSpan.dataset.tip = nowPinned
-                        ? (chrome.i18n.getMessage('unpinAction') || '取消标记重点')
-                        : (chrome.i18n.getMessage('pinAction') || '标记重点');
-                }
-            });
-            pinSpan.addEventListener('mouseenter', () => {
-                window.globalTooltipManager.showOverlay(pinSpan, pinSpan.dataset.tip, { placement: 'top' });
-            });
-            pinSpan.addEventListener('mouseleave', () => {
-                window.globalTooltipManager.hideOverlay();
-            });
-
-            // 创建星标图标
-            const starSpan = document.createElement('span');
-            starSpan.className = 'timeline-tooltip-star';
-            starSpan.dataset.targetTurnId = id;
-            if (!isStarred) starSpan.classList.add('not-starred');
-            starSpan.dataset.tip = isStarred
-                ? (chrome.i18n.getMessage('unstarAction') || '取消收藏')
-                : (chrome.i18n.getMessage('starAction') || '收藏到文件夹');
-            starSpan.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                window.globalTooltipManager.hideOverlay();
-                const turnId = starSpan.dataset.targetTurnId;
-                const result = await this.toggleStar(turnId);
-                if (result && result.success) {
-                    const toastColor = {
-                        light: { backgroundColor: '#0d0d0d', textColor: '#ffffff', borderColor: '#262626' },
-                        dark: { backgroundColor: '#ffffff', textColor: '#1f2937', borderColor: '#d1d5db' }
-                    };
-                    if (result.action === 'star') {
-                        starSpan.classList.remove('not-starred');
-                        starSpan.dataset.tip = chrome.i18n.getMessage('unstarAction') || '取消收藏';
-                        if (window.globalToastManager) {
-                            window.globalToastManager.success(chrome.i18n.getMessage('kxpmzv'), null, { color: toastColor });
-                        }
-                    } else if (result.action === 'unstar') {
-                        starSpan.classList.add('not-starred');
-                        starSpan.dataset.tip = chrome.i18n.getMessage('starAction') || '收藏到文件夹';
-                        if (window.globalToastManager) {
-                            window.globalToastManager.info(chrome.i18n.getMessage('pzmvkx'), null, { color: toastColor });
-                        }
-                    }
-                }
-            });
-            starSpan.addEventListener('mouseenter', () => {
-                window.globalTooltipManager.showOverlay(starSpan, starSpan.dataset.tip, { placement: 'top' });
-            });
-            starSpan.addEventListener('mouseleave', () => {
-                window.globalTooltipManager.hideOverlay();
-            });
-
-            actions.appendChild(pinSpan);
-            actions.appendChild(starSpan);
-        }
-
-        // 组装
-        contentWrap.appendChild(content);
-        container.appendChild(contentWrap);
-        if (actions) {
-            container.appendChild(actions);
-        }
+        content.textContent = messageText;
+        container.appendChild(content);
         
         return container;
     }
@@ -2652,6 +3127,13 @@ class TimelineManager {
         
         // 设置包装容器位置（包含时间轴和收藏按钮）
         this.ui.wrapper.style.top = topValue;
+        if (position.right) {
+            this.ui.wrapper.style.right = position.right;
+            this.ui.wrapper.style.left = 'auto';
+        } else if (position.left) {
+            this.ui.wrapper.style.left = position.left;
+            this.ui.wrapper.style.right = 'auto';
+        }
         
         // 设置时间轴高度
         this.ui.timelineBar.style.height = `max(200px, calc(100vh - ${topValue} - ${bottomValue}))`;
@@ -2662,20 +3144,9 @@ class TimelineManager {
     /**
      * 更新时间轴几何布局
      * 
-     * 核心逻辑：将归一化位置（n，范围 0-1）转换为时间轴上的实际像素位置
-     * 
-     * 布局策略：
-     * 1. 计算可用空间：usableC = contentHeight - 2*pad
-     *    - 顶部预留 pad 像素
-     *    - 底部预留 pad 像素
-     *    - 中间是实际可用空间
-     * 
-     * 2. 计算节点位置：y = pad + n * usableC
-     *    - 第一个节点（n=0）：y = pad（离顶部有边距）
-     *    - 最后一个节点（n=1）：y = pad + usableC = contentHeight - pad（离底部有边距）
-     *    - 中间节点按比例分布
-     * 
-     * 3. 应用最小间距约束：确保相邻节点之间至少有 minGap 像素
+     * 使用固定中心距按提问顺序排列：
+     * - 能放下时，整个刻度组在可用高度内垂直居中。
+     * - 放不下时，内容高度自然增长，由内部轨道跟随主对话滚动。
      */
     updateTimelineGeometry() {
         if (!this.ui.timelineBar || !this.ui.trackContent) return;
@@ -2686,40 +3157,31 @@ class TimelineManager {
         const H = this.ui.timelineBar.clientHeight || 0;
         const pad = this.getTrackPadding();
         const N = this.markers.length;
-        
-        let adjusted;
-        
-        if (this.isCompactMode) {
-            // ✅ 紧凑模式：均匀分布，间距自适应，整体垂直居中
-            this.contentHeight = H;
-            this.scale = 1;
-            try { this.ui.trackContent.style.height = `${H}px`; } catch {}
-            
-            const defaultGap = this.getCompactGap();
-            const usableH = Math.max(1, H - 2 * pad);
-            const requiredHeight = Math.max(0, N - 1) * defaultGap;
-            
-            // 如果空间不足，自动缩小间距
-            const actualGap = (N <= 1) ? defaultGap : 
-                (requiredHeight > usableH) ? (usableH / Math.max(1, N - 1)) : defaultGap;
-            
-            const totalHeight = Math.max(0, N - 1) * actualGap;
-            const startY = (H - totalHeight) / 2; // 垂直居中
-            adjusted = this.markers.map((_, i) => startY + i * actualGap);
-        } else {
-            // 正常模式：原有逻辑
-            const minGap = this.getMinGap();
-            const desired = Math.max(H, (N > 0 ? (2 * pad + Math.max(0, N - 1) * minGap) : H));
-            this.contentHeight = Math.ceil(desired);
-            this.scale = (H > 0) ? (this.contentHeight / H) : 1;
-            try { this.ui.trackContent.style.height = `${this.contentHeight}px`; } catch {}
+        const hasPinSlot = !!this.temporaryPin;
+        const pinSlotIndex = hasPinSlot
+            ? this.getTemporaryPinSlotIndex(this.temporaryPin.scrollTop, this.temporaryPin.sourceMarkerId)
+            : -1;
 
-            const usableC = Math.max(1, this.contentHeight - 2 * pad);
-            const desiredY = this.markers.map(m => pad + Math.max(0, Math.min(1, (m.visualN ?? 0))) * usableC);
-            adjusted = this.applyMinGap(desiredY, pad, pad + usableC, minGap);
-        }
+        const gap = this.getCompactGap();
+        const slotCount = N + (hasPinSlot ? 1 : 0);
+        const totalHeight = Math.max(0, slotCount - 1) * gap;
+        const requiredHeight = 2 * pad + totalHeight;
+        this.contentHeight = Math.max(H, requiredHeight);
+        this.scale = (H > 0) ? (this.contentHeight / H) : 1;
+        try { this.ui.trackContent.style.height = `${this.contentHeight}px`; } catch {}
+
+        const startY = requiredHeight <= H ? (H - totalHeight) / 2 : pad;
+        const adjusted = this.markers.map((_, i) => {
+            const slotIndex = i + (hasPinSlot && pinSlotIndex <= i ? 1 : 0);
+            return startY + slotIndex * gap;
+        });
         
         this.yPositions = adjusted;
+        if (hasPinSlot) {
+            this.temporaryPin.slotIndex = pinSlotIndex;
+            this.temporaryPin.trackY = startY + pinSlotIndex * gap;
+        }
+        this.updateTimelineToolbarPosition();
         
         // ✅ 更新 dotN（经过 minGap 调整的圆点定位值）
         const usableForN = Math.max(1, this.contentHeight - 2 * pad);
@@ -2732,6 +3194,8 @@ class TimelineManager {
                 try { this.markers[i].dotElement.style.setProperty('--n', String(this.markers[i].dotN)); } catch {}
             }
         }
+        // Pin 也必须跟随紧凑轨道的真实坐标，避免几何更新后偏离刻度。
+        this.renderPinMarkers();
         if (this._cssVarTopSupported === null) {
             this._cssVarTopSupported = this.detectCssVarTopSupport(pad, usableForN);
             this.usePixelTop = !this._cssVarTopSupported;
@@ -2771,6 +3235,28 @@ class TimelineManager {
         if (Math.abs((this.ui.track.scrollTop || 0) - target) > 1) {
             this.ui.track.scrollTop = target;
         }
+        this.updateTimelineToolbarPosition();
+    }
+
+    updateTimelineToolbarPosition() {
+        if (!this.ui?.wrapper || !this.ui?.timelineBar || !this.yPositions?.length) return false;
+
+        const viewportHeight = this.ui.timelineBar.clientHeight || 0;
+        const trackScrollTop = this.ui.track?.scrollTop || 0;
+        const timelinePositions = Array.from(this.yPositions);
+        if (Number.isFinite(this.temporaryPin?.trackY)) {
+            timelinePositions.push(this.temporaryPin.trackY);
+            timelinePositions.sort((a, b) => a - b);
+        }
+        const visiblePositions = timelinePositions
+            .map(position => position - trackScrollTop)
+            .filter(position => position >= 0 && (viewportHeight <= 0 || position <= viewportHeight));
+        const lastVisibleY = visiblePositions.length > 0
+            ? visiblePositions[visiblePositions.length - 1]
+            : Math.max(0, Math.min(viewportHeight, timelinePositions[timelinePositions.length - 1] - trackScrollTop));
+
+        this.ui.wrapper.style.setProperty('--timeline-toolbar-y', `${Math.round(lastVisibleY)}px`);
+        return true;
     }
 
     updateVirtualRangeAndRender() {
@@ -2816,7 +3302,7 @@ class TimelineManager {
                 dot.dataset.targetTurnId = marker.id;
                 dot.setAttribute('aria-label', marker.summary);
                 dot.setAttribute('tabindex', '0');
-                try { dot.setAttribute('aria-describedby', 'chat-timeline-tooltip'); } catch {}
+                try { dot.setAttribute('aria-describedby', 'global-tooltip-node'); } catch {}
                 try { dot.style.setProperty('--n', String(marker.dotN || 0)); } catch {}
                 if (this.usePixelTop) {
                     dot.style.top = `${Math.round(this.yPositions[i])}px`;
@@ -2829,8 +3315,6 @@ class TimelineManager {
                 try { 
                     dot.classList.toggle('pinned', this.pinned.has(marker.id));
                 } catch {}
-                // ✅ 添加：奇偶标识（用于紧凑模式长短交替）
-                try { dot.classList.add(i % 2 === 0 ? 'line-even' : 'line-odd'); } catch {}
                 marker.dotElement = dot;
                 frag.appendChild(dot);
             } else {
@@ -3018,71 +3502,13 @@ class TimelineManager {
             }
             
             // Sync long-canvas scroll and virtualized dots before computing active
+            this.syncPinNavigationState();
             this.syncTimelineTrackToMain();
             this.updateVirtualRangeAndRender();
             this.computeActiveByScroll();
+            this._maybeApplyPendingAutoBottomJumpPin();
+            this._recordScrollSnapshot();
         });
-    }
-
-    scheduleAICompleteToastCheck() {
-        this.aiCompleteToastTimer = TimelineUtils.clearTimerSafe(this.aiCompleteToastTimer);
-        this.aiCompleteToastTimer = setTimeout(() => {
-            this.aiCompleteToastTimer = null;
-            this.maybeShowAICompleteNotLatestToast();
-        }, TIMELINE_CONFIG.AI_COMPLETE_TOAST_DELAY);
-    }
-
-    maybeShowAICompleteNotLatestToast() {
-        if (!this.aiCompleteToastEnabled) return;
-        if (!this.isPlatformEnabled()) return;
-        if (!this.markers || this.markers.length <= 1) return;
-        if (this.ui.wrapper && this.ui.wrapper.style.display === 'none') return;
-        if (!window.globalToastManager) return;
-
-        try {
-            this._recalcMarkerPositions();
-            this.computeActiveByScroll();
-        } catch {}
-
-        const activeId = this.pendingActiveId || this.activeTurnId;
-        const activeIndex = activeId ? this.markers.findIndex(m => m.id === activeId) : -1;
-        if (activeIndex < 0 || activeIndex >= this.markers.length - 1) return;
-
-        const platformName = getCurrentPlatform()?.name || 'AI';
-        const message = chrome.i18n.getMessage('timelineAICompleteNotLatestToast', platformName) ||
-            `${platformName} 回复已完成`;
-        const anchor = this.getAICompleteToastAnchor();
-
-        window.globalToastManager.info(message, anchor, {
-            duration: 3500,
-            iconType: 'check',
-            color: false,
-            className: 'ait-ai-complete-toast',
-            useClassStyles: true,
-            position: 'left',
-            gap: 10
-        });
-    }
-
-    getAICompleteToastAnchor() {
-        if (this.aiCompleteToastAnchor?.isConnected) {
-            return this.aiCompleteToastAnchor;
-        }
-
-        const anchor = document.createElement('div');
-        anchor.className = 'ait-timeline-ai-complete-toast-anchor';
-        anchor.style.cssText = [
-            'position: fixed',
-            'top: 72px',
-            'right: 26px',
-            'width: 1px',
-            'height: 1px',
-            'pointer-events: none',
-            'z-index: 2147483647'
-        ].join(';');
-        document.body.appendChild(anchor);
-        this.aiCompleteToastAnchor = anchor;
-        return anchor;
     }
 
     /**
@@ -3216,7 +3642,7 @@ class TimelineManager {
         }
         
         const getOffsetTop = (element, container) => {
-            const elemRect = element.getBoundingClientRect();
+            const elemRect = this._getMessageRect(element);
             const contRect = container.getBoundingClientRect();
             return elemRect.top - contRect.top + (container.scrollTop || 0);
         };
@@ -3236,7 +3662,7 @@ class TimelineManager {
         this.markers.forEach((m, index) => {
             m.offsetTop = nodeOffsets[index];
             
-            const nodeHeight = m.element.offsetHeight || 0;
+            const nodeHeight = this._getMessageHeight(m.element);
             m.offsetBottom = m.offsetTop + nodeHeight;
             
             // visualN: 位置比例 0~1
@@ -3274,7 +3700,7 @@ class TimelineManager {
             for (let i = this.markers.length - 1; i >= 0; i--) {
                 const m = this.markers[i];
                 if (!m.element) continue;
-                if (m.element.getBoundingClientRect().top <= activateThreshold) {
+                if (this._getMessageRect(m.element).top <= activateThreshold) {
                     activeId = m.id;
                     break;
                 }
@@ -3397,6 +3823,15 @@ class TimelineManager {
     }
 
     destroy() {
+        this._destroyed = true;
+        try { this.flushScrollPositionSave(); } catch {}
+        this._folderManagerInitTimer = TimelineUtils.clearTimerSafe(this._folderManagerInitTimer);
+        this._initialRenderTimer = TimelineUtils.clearTimerSafe(this._initialRenderTimer);
+        this._initialSecondRenderTimer = TimelineUtils.clearTimerSafe(this._initialSecondRenderTimer);
+        this._initialStarredBtnRaf1 = TimelineUtils.clearRafSafe(this._initialStarredBtnRaf1);
+        this._initialStarredBtnRaf2 = TimelineUtils.clearRafSafe(this._initialStarredBtnRaf2);
+        this.scrollPositionSaveTimer = TimelineUtils.clearTimerSafe(this.scrollPositionSaveTimer);
+
         // Disconnect observers
         TimelineUtils.disconnectObserverSafe(this.mutationObserver);
         TimelineUtils.disconnectObserverSafe(this.resizeObserver);
@@ -3419,6 +3854,10 @@ class TimelineManager {
         if (this._unsubscribeTheme) {
             this._unsubscribeTheme();
             this._unsubscribeTheme = null;
+        }
+        if (this._unsubscribeCapturedChatsData) {
+            this._unsubscribeCapturedChatsData();
+            this._unsubscribeCapturedChatsData = null;
         }
         
         // ✅ 清理健康检查定时器
@@ -3468,15 +3907,25 @@ class TimelineManager {
         TimelineUtils.removeEventListenerSafe(this.ui.timelineBar, 'touchend', this.cancelLongPress);
         TimelineUtils.removeEventListenerSafe(this.ui.timelineBar, 'touchcancel', this.cancelLongPress);
         TimelineUtils.removeEventListenerSafe(this.scrollContainer, 'scroll', this.onScroll, { passive: true });
+        TimelineUtils.removeEventListenerSafe(window, 'pagehide', this.onPageHide);
+        TimelineUtils.removeEventListenerSafe(window, 'beforeunload', this.onBeforeUnload);
+        TimelineUtils.removeEventListenerSafe(document, 'visibilitychange', this.onVisibilityChange);
+        TimelineUtils.removeEventListenerSafe(document, 'click', this.onPotentialSendClick, true);
+        TimelineUtils.removeEventListenerSafe(document, 'keydown', this.onPotentialSendKeyDown, true);
         TimelineUtils.removeEventListenerSafe(this.ui.timelineBar, 'mouseover', this.onTimelineBarOver);
         TimelineUtils.removeEventListenerSafe(this.ui.timelineBar, 'mouseout', this.onTimelineBarOut);
         TimelineUtils.removeEventListenerSafe(this.ui.timelineBar, 'focusin', this.onTimelineBarFocusIn);
         TimelineUtils.removeEventListenerSafe(this.ui.timelineBar, 'focusout', this.onTimelineBarFocusOut);
         // ✅ 注意：不再需要清理 tooltip 事件监听器（因为 tooltip 不由 Timeline 创建）
         TimelineUtils.removeEventListenerSafe(this.ui.timelineBar, 'wheel', this.onTimelineWheel);
-        TimelineUtils.removeEventListenerSafe(window, 'ai:stateChange', this.onAIStateChange);
         TimelineUtils.removeEventListenerSafe(window, 'resize', this.onWindowResize);
         TimelineUtils.removeEventListenerSafe(window.visualViewport, 'resize', this.onVisualViewportResize);
+        TimelineUtils.removeEventListenerSafe(document, 'change', this.onAutoSendImageUploadChange, true);
+        TimelineUtils.removeEventListenerSafe(document, 'paste', this.onAutoSendImageUploadCandidate, true);
+        TimelineUtils.removeEventListenerSafe(document, 'drop', this.onAutoSendImageUploadCandidate, true);
+        TimelineUtils.removeEventListenerSafe(this.ui.autoSendImageUploadToggle, 'click', this.onAutoSendImageUploadsToggleClick);
+        TimelineUtils.removeEventListenerSafe(this.ui.autoSendImageUploadToggle, 'mouseenter', this.onAutoSendImageUploadsToggleMouseEnter);
+        TimelineUtils.removeEventListenerSafe(this.ui.autoSendImageUploadToggle, 'mouseleave', this.onAutoSendImageUploadsToggleMouseLeave);
         
         // Clear timers and RAF
         this.scrollRafId = TimelineUtils.clearRafSafe(this.scrollRafId);
@@ -3487,7 +3936,8 @@ class TimelineManager {
         this.resizeIdleRICId = TimelineUtils.clearIdleCallbackSafe(this.resizeIdleRICId);
         // ✅ 移除：longPressTimer 已删除
         this.zeroTurnsTimer = TimelineUtils.clearTimerSafe(this.zeroTurnsTimer);
-        this.aiCompleteToastTimer = TimelineUtils.clearTimerSafe(this.aiCompleteToastTimer);
+        this.clearAutoSendImageUploadPending();
+        this._clearAutoBottomJumpFlashCandidate();
         this.showRafId = TimelineUtils.clearRafSafe(this.showRafId);
         
         // Remove DOM elements
@@ -3500,18 +3950,18 @@ class TimelineManager {
         
         // ✅ 清理临时 Pin 按钮
         TimelineUtils.removeElementSafe(this.ui.tempPinBtn);
+
+        // ✅ 清理上传图片自动发送开关
+        TimelineUtils.removeElementSafe(this.ui.autoSendImageUploadToggle);
         
         // ✅ 清理切换按钮
         TimelineUtils.removeElementSafe(this.ui.toggleBtn);
         
-        // ✅ 清理 AI 完成提示定位锚点
-        TimelineUtils.removeElementSafe(this.aiCompleteToastAnchor);
-
         // ✅ 清理底部空白元素。切换会话时旧容器可能仍留在 DOM 中，必须全局清理残留。
         this.cleanupScrollPadding();
         
         // Clear references
-        this.ui = { timelineBar: null, track: null, trackContent: null, tempPinBtn: null };
+        this.ui = { timelineBar: null, track: null, trackContent: null, tempPinBtn: null, autoSendImageUploadToggle: null };
         this.markers = [];
         this.activeTurnId = null;
         this.scrollContainer = null;
@@ -3525,14 +3975,25 @@ class TimelineManager {
         this.onScroll = null;
         this.onWindowResize = null;
         this.onVisualViewportResize = null;
-        this.onAIStateChange = null;
+        this.onPageHide = null;
+        this.onBeforeUnload = null;
+        this.onVisibilityChange = null;
+        this.onPotentialSendClick = null;
+        this.onPotentialSendKeyDown = null;
+        this.onAutoSendImageUploadChange = null;
+        this.onAutoSendImageUploadCandidate = null;
+        this.onAutoSendImageUploadsToggleClick = null;
+        this.onAutoSendImageUploadsToggleMouseEnter = null;
+        this.onAutoSendImageUploadsToggleMouseLeave = null;
         // ✅ 清理长按相关的引用
         this.startLongPress = this.checkLongPressMove = this.cancelLongPress = null;
         // ✅ 清理键盘导航引用
         this.onKeyDown = null;
         this.pendingActiveId = null;
         this.temporaryPin = null;
-        this.aiCompleteToastAnchor = null;
+        this.pendingAutoBottomJump = null;
+        this._pendingMessageSendSnapshot = null;
+        this._pendingAutoSendImageUpload = null;
     }
 
     // --- Star/Highlight helpers ---
@@ -3563,6 +4024,8 @@ class TimelineManager {
      * ✅ 加载标记数据（与loadStars类似）
      */
     async loadPins() {
+        this.pendingAutoBottomJump = null;
+        this._clearAutoBottomJumpFlashCandidate();
         this.temporaryPin = null;
         this.pinned.clear();
         this.pinnedIndexes.clear();
@@ -3585,21 +4048,6 @@ class TimelineManager {
             console.error('[Timeline] Failed to load arrow keys navigation state:', e);
             // 读取失败，默认开启
             this.arrowKeysNavigationEnabled = true;
-        }
-    }
-
-    /**
-     * ✅ 加载 AI 回复完成提醒状态
-     */
-    async loadAICompleteToastState() {
-        try {
-            const result = await chrome.storage.local.get('timelineAICompleteToastEnabled');
-            // 默认开启（!== false）
-            this.aiCompleteToastEnabled = result.timelineAICompleteToastEnabled !== false;
-        } catch (e) {
-            console.error('[Timeline] Failed to load AI complete toast state:', e);
-            // 读取失败，默认开启
-            this.aiCompleteToastEnabled = true;
         }
     }
 
@@ -3635,7 +4083,7 @@ class TimelineManager {
     applyTimelineActiveColor() {
         if (!this.ui.timelineBar) return;
 
-        const platformId = getCurrentPlatform()?.id || 'default';
+        const platformId = this._currentPlatform?.id || 'default';
         const color = resolveTimelineActiveColor(platformId, this.timelineActiveColorByPlatform);
         this.ui.timelineBar.style.setProperty('--ait-timeline-dot-active-color', color);
     }
@@ -3655,7 +4103,7 @@ class TimelineManager {
     isPlatformEnabled() {
         try {
             // 获取当前平台信息
-            const platform = getCurrentPlatform();
+            const platform = this._currentPlatform;
             if (!platform) return true; // 未知平台，默认启用
             
             // ✅ 首先检查平台是否支持时间轴功能
@@ -3797,7 +4245,7 @@ class TimelineManager {
         
         // ✅ 检查是否是 useStableNodeId 平台但还没有真正的 ID
         // 临时 ID 格式：平台名-小数字（如 doubao-0），真实 ID 的数字部分远大于 1000
-        const features = getCurrentPlatform()?.features;
+        const features = this._currentPlatform?.features;
         if (features?.useStableNodeId === true) {
             const tempMatch = id.match(/-(\d+)$/);
             const isTempId = tempMatch && parseInt(tempMatch[1], 10) < 1000;
@@ -4029,9 +4477,6 @@ class TimelineManager {
     
     // ✅ 更新收藏按钮显示状态
     async updateStarredBtnVisibility() {
-        if (this.ui.questionListBtn && this.getTimelineFeatures()?.questionList === true) {
-            this.ui.questionListBtn.style.display = 'flex';
-        }
         if (!this.ui.starredBtn) return;
 
         // 隐藏收藏按钮（功能已合并到提问列表中）
@@ -4164,32 +4609,43 @@ class TimelineManager {
      * ✅ 渲染所有图钉（独立于节点渲染）
      */
     renderPinMarkers() {
-        if (!this.ui?.timelineBar) return;
+        if (!this.ui?.timelineBar || !this.ui?.trackContent) return;
 
         const tempPins = this.ui.timelineBar.querySelectorAll('.timeline-pin-marker');
-        tempPins.forEach(pin => pin.remove());
+        tempPins.forEach(pin => {
+            if (!pin.classList.contains('timeline-pin-marker-flash')) {
+                pin.remove();
+            }
+        });
 
         if (!this.temporaryPin) return;
 
         this.temporaryPin.visualN = this.getTemporaryPinVisualN(this.temporaryPin.scrollTop);
 
         const pinMarker = document.createElement('button');
-        pinMarker.className = 'timeline-pin-marker';
+        pinMarker.className = 'timeline-pin-marker timeline-pin-marker-current';
         pinMarker.type = 'button';
         if (this.temporaryPin.sourceMarkerId) {
             pinMarker.dataset.markerId = this.temporaryPin.sourceMarkerId;
         }
         pinMarker.setAttribute('aria-label', chrome.i18n.getMessage('returnToPinnedAnswer') || 'Return to pinned answer');
-        pinMarker.style.setProperty('--n', String(this.temporaryPin.visualN));
+        if (this.pinNavigationActive) {
+            pinMarker.setAttribute('aria-current', 'location');
+        }
+        pinMarker.style.setProperty(
+            '--timeline-pin-y',
+            `${this.getTemporaryPinTrackY(this.temporaryPin.scrollTop, this.temporaryPin.sourceMarkerId)}px`
+        );
 
         pinMarker.addEventListener('click', (e) => {
             e.stopPropagation();
             if (!this.scrollContainer) return;
+            this.setPinNavigationActive(true);
             this.scrollContainer.scrollTop = this.temporaryPin.scrollTop;
             this.scheduleScrollSync?.();
         });
 
-        this.ui.timelineBar.appendChild(pinMarker);
+        this.ui.trackContent.appendChild(pinMarker);
     }
 
     // ✅ 移除：cancelLongPress 方法已删除，长按收藏功能已移除

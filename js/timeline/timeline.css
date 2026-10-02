@@ -173,10 +173,6 @@ html[data-timeline-theme="dark"] .ait-chat-timeline-bar {
     z-index: 1;
 }
 
-.ait-timeline-dot.line-odd::after {
-    width: var(--timeline-compact-line-width-short);
-}
-
 /* 刻度从右向左伸长，保持最右侧锚点稳定。 */
 .ait-timeline-dot:hover::after,
 .ait-timeline-dot:focus-visible::after {
@@ -186,7 +182,7 @@ html[data-timeline-theme="dark"] .ait-chat-timeline-bar {
 }
 /* Style for the currently active dot */
 .ait-timeline-dot.active::after {
-    width: var(--timeline-line-width-active);
+    width: var(--timeline-compact-line-width-long);
     height: 3px;
     background-color: var(--timeline-line-emphasis-color);
 }
@@ -291,11 +287,6 @@ html[data-timeline-theme="dark"] .ait-chat-timeline-bar {
     width: var(--timeline-compact-line-width-long);
     height: var(--timeline-compact-line-height);
     background-color: var(--ait-timeline-dot-color);
-}
-
-.ait-chat-timeline-bar.ait-pin-location-active
-    .ait-timeline-dot.active.line-odd:not(:hover):not(:focus-visible)::after {
-    width: var(--timeline-compact-line-width-short);
 }
 
 .timeline-pin-marker.timeline-neighbor-1:not(:hover):not(:focus-visible)::before {
@@ -753,11 +744,6 @@ html[data-timeline-theme="dark"] .ait-chat-timeline-bar.ait-compact-mode {
     transform: translateY(-50%);
 }
 
-/* 奇数节点使用短刻度，与偶数节点形成稳定的长短节奏。 */
-.ait-compact-mode .ait-timeline-dot.line-odd::after {
-    width: var(--timeline-compact-line-width-short);
-}
-
 /* 紧凑模式：hover 效果 */
 .ait-compact-mode .ait-timeline-dot:hover::after,
 .ait-compact-mode .ait-timeline-dot:focus-visible::after {
@@ -775,10 +761,6 @@ html[data-timeline-theme="dark"] .ait-chat-timeline-bar.ait-compact-mode {
     height: var(--timeline-compact-line-height);
 }
 
-.ait-compact-mode .ait-timeline-dot.starred.line-odd::after {
-    width: var(--timeline-compact-line-width-short);
-}
-
 .ait-compact-mode .ait-timeline-dot.starred:hover::after,
 .ait-compact-mode .ait-timeline-dot.starred:focus-visible::after {
     width: var(--timeline-line-width-hover);
@@ -788,7 +770,7 @@ html[data-timeline-theme="dark"] .ait-chat-timeline-bar.ait-compact-mode {
 
 /* 紧凑模式：激活节点 - 主题色边框 */
 .ait-compact-mode .ait-timeline-dot.active::after {
-    width: var(--timeline-line-width-active);
+    width: var(--timeline-compact-line-width-long);
     height: 3px;
     background-color: var(--timeline-line-emphasis-color);
     box-shadow: none;

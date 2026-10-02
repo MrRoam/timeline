@@ -755,15 +755,14 @@ test('selected pin becomes the only emphasized timeline location', () => {
     assert.match(css, /\.ait-chat-timeline-bar\.ait-pin-location-active[\s\S]*?\.ait-timeline-dot\.active:not\(:hover\):not\(:focus-visible\)::after\s*\{[\s\S]*?background-color:\s*var\(--ait-timeline-dot-color\)/);
 });
 
-test('idle lines alternate between long and short widths while the active line stays emphasized', () => {
+test('idle question lines share one width while the active line stays emphasized without growing', () => {
     const css = fs.readFileSync(path.join(__dirname, '..', 'js', 'timeline', 'timeline.css'), 'utf8');
     const variables = fs.readFileSync(path.join(__dirname, '..', 'styles', 'variables.css'), 'utf8');
     assert.match(variables, /--timeline-compact-line-width-long:\s*14px/);
-    assert.match(variables, /--timeline-compact-line-width-short:\s*10px/);
     assert.match(variables, /--timeline-line-width-active:\s*28px/);
     assert.match(variables, /--timeline-pin-line-width:\s*10px/);
-    assert.match(css, /\.ait-timeline-dot\.line-odd::after\s*\{[\s\S]*?width:\s*var\(--timeline-compact-line-width-short\)/);
-    assert.match(css, /\.ait-timeline-dot\.active::after\s*\{[\s\S]*?width:\s*var\(--timeline-line-width-active\)/);
+    assert.doesNotMatch(css, /\.ait-timeline-dot\.line-odd::after/);
+    assert.match(css, /\.ait-timeline-dot\.active::after\s*\{[\s\S]*?width:\s*var\(--timeline-compact-line-width-long\)/);
     assert.match(css, /\.ait-timeline-dot\.active:hover::after,[\s\S]*?width:\s*var\(--timeline-line-width-hover\)/);
     assert.match(css, /\.timeline-pin-marker:hover::before,[\s\S]*?width:\s*var\(--timeline-line-width-hover\)/);
 });
@@ -809,7 +808,7 @@ test('timeline stylesheet renders every node as a right-anchored expanding line'
     const variables = fs.readFileSync(path.join(__dirname, '..', 'styles', 'variables.css'), 'utf8');
     assert.match(css, /\.ait-timeline-dot::after\s*\{[\s\S]*?right:\s*2px/);
     assert.match(css, /\.ait-timeline-dot:hover::after,[\s\S]*?width:\s*var\(--timeline-line-width-hover\)/);
-    assert.match(css, /\.ait-timeline-dot\.active::after\s*\{[\s\S]*?width:\s*var\(--timeline-line-width-active\)/);
+    assert.match(css, /\.ait-timeline-dot\.active::after\s*\{[\s\S]*?width:\s*var\(--timeline-compact-line-width-long\)/);
     assert.match(css, /\.ait-chat-timeline-bar\s*\{[\s\S]*?background:\s*transparent/);
     assert.match(css, /height:\s*var\(--timeline-hit-height\)/);
     assert.match(variables, /--timeline-compact-gap:\s*12px/);

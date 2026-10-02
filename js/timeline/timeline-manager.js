@@ -202,6 +202,14 @@ class TimelineManager {
         return this.adapter.getFeatures?.() || this._currentPlatform?.features || {};
     }
 
+    _getMessageRect(element) {
+        return this.adapter.getTimelineMessageRect?.(element) || element.getBoundingClientRect();
+    }
+
+    _getMessageHeight(element) {
+        return this.adapter.getTimelineMessageRect?.(element)?.height ?? (element.offsetHeight || 0);
+    }
+
     _collectUserTurnElements({ scope = document, forcePrepare = false, reason = '' } = {}) {
         this.adapter.prepareTimelineNodes?.({ force: forcePrepare, reason });
         const selector = this.adapter.getUserMessageSelector();
@@ -684,7 +692,7 @@ class TimelineManager {
             const firstMsg = this.conversationContainer.querySelector(selector);
             if (!firstMsg) return true;
             
-            const rect = firstMsg.getBoundingClientRect();
+            const rect = this._getMessageRect(firstMsg);
             if (rect.width === 0) return true; // 不可见时默认显示
             
             // 计算距离浏览器右边框的距离
@@ -826,7 +834,7 @@ class TimelineManager {
         
         // 如果节点没有变化，只更新渲染，不重新计算位置
         if (!needsRecalculation && this.markers.length > 0) {
-            this.refreshPlaceholderSummaries();
+            this.refreshPlaceholderSummaries({ force: true });
             // 只更新视图和同步状态（不涉及位置计算）
             this.syncTimelineTrackToMain();
             this.updateVirtualRangeAndRender();
@@ -893,7 +901,7 @@ class TimelineManager {
          * - 结果 = 元素相对于容器内容区域顶部的绝对距离
          */
         const getOffsetTop = (element, container) => {
-            const elemRect = element.getBoundingClientRect();
+            const elemRect = this._getMessageRect(element);
             const contRect = container.getBoundingClientRect();
             let contScrollTop = container.scrollTop || 0;
             
@@ -976,7 +984,7 @@ class TimelineManager {
             const offsetTop = nodeOffsets[index];
             
             // offsetBottom: 节点结束位置 = offsetTop + 节点高度（像素）
-            const nodeHeight = el.offsetHeight || 0;
+            const nodeHeight = this._getMessageHeight(el);
             const offsetBottom = offsetTop + nodeHeight;
             
             // visualN: 用于时间轴圆点定位（0~1，保留6位小数）
@@ -1107,9 +1115,9 @@ class TimelineManager {
         };
         
         this.handleInitialNavigationOrRestore(findMarkerByNodeKey).catch(() => {});
-        
+
     }
-    
+
     mutationTouchesUserTurns(mutations) {
         const elementNode = (typeof Node !== 'undefined' && Node.ELEMENT_NODE) || 1;
         const selectors = this.adapter.getTimelineStructureSelectors?.()
@@ -1127,6 +1135,11 @@ class TimelineManager {
         };
 
         const changed = mutations.some(mutation => {
+            const target = mutation.target?.nodeType === elementNode
+                ? mutation.target : mutation.target?.parentElement;
+            // 角色标题可能先插入空节点，再补文本；流式正文文本仍直接忽略。
+            if (target?.matches?.('h4.sr-only')) return true;
+            if (mutation.type === 'characterData') return false;
             if (mutation.type === 'attributes') {
                 if (mutation.attributeName === 'data-is-intersecting') {
                     // true/false 只是滚动状态；只有属性新增或移除才表示结构准备就绪状态变化。
@@ -1136,6 +1149,9 @@ class TimelineManager {
                 return true;
             }
             if (mutation.type !== 'childList') return false;
+            if (Array.from(target?.children || []).some(child => child.matches?.('h4.sr-only'))) {
+                return true; // 标题先出现、正文随后挂载。
+            }
 
             const nodes = [
                 ...Array.from(mutation.addedNodes || []),
@@ -1154,7 +1170,11 @@ class TimelineManager {
 
     observeConversationMutations() {
         if (!this.mutationObserver || !this.conversationContainer) return;
-        const options = { childList: true, subtree: true };
+        const options = {
+            ...this.adapter.getTimelineStructureObserverOptions?.(),
+            childList: true,
+            subtree: true
+        };
         this._timelineStructureAttributeFilter = Array.from(new Set(
             (this.adapter.getTimelineStructureAttributeFilter?.() || []).filter(Boolean)
         ));
@@ -1453,7 +1473,12 @@ class TimelineManager {
         this._unsubscribeCapturedChatsData = this.adapter.subscribeCapturedChatsDataUpdated?.((detail) => {
             if (this._destroyed) return;
             if (!detail?.conversationId || detail.conversationId !== this.conversationId) return;
-            this.refreshPlaceholderSummaries();
+            if (detail.rebuildMarkers) {
+                this.adapter.invalidateTimelineNodes?.('captured-data');
+                this.recalculateAndRenderMarkers();
+            } else {
+                this.refreshPlaceholderSummaries({ force: true });
+            }
         }) || null;
 
         // ✅ 长按标记功能：长按节点切换图钉
@@ -1923,10 +1948,10 @@ class TimelineManager {
                 console.error('[TimelineManager] Failed to register panel tabs:', error);
             });
         }
-        
+
         // ✅ 挂载到 window 以便其他模块访问
         window.timelineManager = this;
-        
+
         // ✅ 初始化时间记录器（解耦模块，确保 adapter 已就绪）
         if (typeof initChatTimeRecorder === 'function') {
             initChatTimeRecorder();
@@ -2121,7 +2146,7 @@ class TimelineManager {
         this._autoSendImageUploadTimer = TimelineUtils.clearTimerSafe(this._autoSendImageUploadTimer);
         this._pendingAutoSendImageUpload = null;
     }
-    
+
     /**
      * ✅ 同步深色模式状态到 html 元素
      * 使用 data-timeline-theme 属性，避免与 detectDarkMode() 的检测冲突
@@ -2129,14 +2154,14 @@ class TimelineManager {
     syncDarkModeClass() {
         const isDarkMode = this.adapter.detectDarkMode?.() || false;
         const htmlElement = document.documentElement;
-        
+
         if (isDarkMode) {
             htmlElement.setAttribute('data-timeline-theme', 'dark');
         } else {
             htmlElement.setAttribute('data-timeline-theme', 'light');
         }
     }
-    
+
     /**
      * ✅ 优化：设置主题变化监听器
      * 当主题切换时，重新缓存 CSS 变量并清空截断缓存
@@ -2149,14 +2174,14 @@ class TimelineManager {
                 this.onThemeChange();
             });
         }
-        
+
         // 监听系统主题变化（prefers-color-scheme）
         try {
             const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
             const mediaQueryHandler = () => {
                 this.onThemeChange();
             };
-            
+
             // 使用现代 API（如果支持）
             if (mediaQuery.addEventListener) {
                 mediaQuery.addEventListener('change', mediaQueryHandler);
@@ -2164,14 +2189,14 @@ class TimelineManager {
                 // 降级到旧 API
                 mediaQuery.addListener(mediaQueryHandler);
             }
-            
+
             // 保存引用以便在 destroy 时清理
             this.mediaQuery = mediaQuery;
             this.mediaQueryHandler = mediaQueryHandler;
         } catch (e) {
         }
     }
-    
+
     /**
      * ✅ 优化：主题变化处理
      */
@@ -2180,10 +2205,10 @@ class TimelineManager {
         requestAnimationFrame(() => {
             // ✅ 同步深色模式类
             this.syncDarkModeClass();
-            
+
             // 重新缓存 CSS 变量
             this.cacheTooltipConfig();
-            
+
             // 清空截断缓存（因为颜色/字体可能变化）
             this.truncateCache.clear();
         });
@@ -2773,7 +2798,7 @@ class TimelineManager {
         // 计算初始目标位置
         const getTargetPosition = () => {
             const containerRect = this.scrollContainer.getBoundingClientRect();
-            const targetRect = targetElement.getBoundingClientRect();
+            const targetRect = this._getMessageRect(targetElement);
             return targetRect.top - containerRect.top + this.scrollContainer.scrollTop - scrollOffset;
         };
         
@@ -2934,15 +2959,15 @@ class TimelineManager {
     }
 
     /** 用适配器的最新缓存补齐尚未加载的提问文本。 */
-    refreshPlaceholderSummaries() {
+    refreshPlaceholderSummaries({ force = false } = {}) {
         let updatedCount = 0;
         this.markers.forEach(marker => {
             const previous = String(marker.summary || '').trim();
-            if (!this.adapter.isPlaceholderSummary?.(previous)) return;
+            if (!force && !this.adapter.isPlaceholderSummary?.(previous)) return;
 
             try {
                 const fresh = String(this.adapter.extractText(marker.element) || '').trim();
-                if (this.adapter.isPlaceholderSummary?.(fresh)) return;
+                if (!fresh || this.adapter.isPlaceholderSummary?.(fresh) || fresh === previous) return;
                 marker.summary = fresh;
                 marker.dotElement?.setAttribute('aria-label', fresh);
                 updatedCount++;
@@ -3290,8 +3315,6 @@ class TimelineManager {
                 try { 
                     dot.classList.toggle('pinned', this.pinned.has(marker.id));
                 } catch {}
-                // ✅ 添加：奇偶标识（用于紧凑模式长短交替）
-                try { dot.classList.add(i % 2 === 0 ? 'line-even' : 'line-odd'); } catch {}
                 marker.dotElement = dot;
                 frag.appendChild(dot);
             } else {
@@ -3619,7 +3642,7 @@ class TimelineManager {
         }
         
         const getOffsetTop = (element, container) => {
-            const elemRect = element.getBoundingClientRect();
+            const elemRect = this._getMessageRect(element);
             const contRect = container.getBoundingClientRect();
             return elemRect.top - contRect.top + (container.scrollTop || 0);
         };
@@ -3639,7 +3662,7 @@ class TimelineManager {
         this.markers.forEach((m, index) => {
             m.offsetTop = nodeOffsets[index];
             
-            const nodeHeight = m.element.offsetHeight || 0;
+            const nodeHeight = this._getMessageHeight(m.element);
             m.offsetBottom = m.offsetTop + nodeHeight;
             
             // visualN: 位置比例 0~1
@@ -3677,7 +3700,7 @@ class TimelineManager {
             for (let i = this.markers.length - 1; i >= 0; i--) {
                 const m = this.markers[i];
                 if (!m.element) continue;
-                if (m.element.getBoundingClientRect().top <= activateThreshold) {
+                if (this._getMessageRect(m.element).top <= activateThreshold) {
                     activeId = m.id;
                     break;
                 }

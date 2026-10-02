@@ -83,6 +83,9 @@
   "promptAllSettingsTooltip": {
     "message": "Alle Einstellungen"
   },
+  "shareExtension": {
+    "message": "Erweiterung teilen"
+  },
   "promptCommonSmartInputHint": {
     "message": "Lege im Chatfeld fest, wie die Eingabetaste Zeilenumbrüche und das Senden von Nachrichten steuert"
   },
@@ -102,7 +105,7 @@
     "message": "Wenn Timeline hilfreich ist, unterstütze es bitte mit einem GitHub-Star."
   },
   "promptCommonMirrorSiteHint": {
-    "message": "Füge eine neue AI-Chat-Website hinzu und schalte Funktionen wie Timeline und Prompts frei."
+    "message": "Passe andere AI-Chat-Websites an und schalte Funktionen wie Timeline, Prompts und Flash Notes frei."
   },
   "promptCommonGithubStarButton": {
     "message": "Zu GitHub"
@@ -834,13 +837,13 @@
     "message": "Adapt a new AI platform"
   },
   "mirrorSiteAdapterHeroDesc": {
-    "message": "Deine genutzte AI-Chat-Website ist nicht dabei? Egal ob AI-Spiegelseite, firmeninterne AI-Chat-Website oder eine Nischenseite – beantrage eine Anpassung. Nach der Anpassung kannst du Funktionen wie „Timeline“, „Prompts“ und „Flash Notes“ freischalten."
+    "message": "Deine genutzte AI-Chat-Website wird nicht unterstützt? Egal ob firmeninterne AI-Chat-Website oder eine Nischenseite – beantrage eine Anpassung. Nach der Anpassung kannst du Funktionen wie „Timeline“, „Prompts“ und „Flash Notes“ freischalten."
   },
   "mirrorSiteAdapterStartButton": {
     "message": "Start setup"
   },
   "mirrorSiteNativeSupportedTitle": {
-    "message": "Nativ unterstützte AI-Plattformen:"
+    "message": "Nativ unterstützte AI-Plattformen und ihre Mirror-Sites:"
   },
   "mirrorSiteWizardStep1": {
     "message": "Open the AI site you want to adapt and start a new conversation"
@@ -920,6 +923,12 @@
   "timelineAICompleteToastHint": {
     "message": "Zeigt eine Erinnerung an, wenn die KI-Antwort fertig ist und du nicht an der neuesten Position bist"
   },
+  "preventAutoScrollLabel": {
+    "message": "Leseposition beim Senden beibehalten"
+  },
+  "preventAutoScrollHint": {
+    "message": "Wenn du eine Nachricht sendest, während du ältere Verläufe ansiehst, bleibt die Seite an deiner aktuellen Leseposition, anstatt nach unten zu springen"
+  },
   "timelineThemeColorLabel": {
     "message": "Timeline-Designfarbe"
   },
@@ -928,5 +937,32 @@
   },
   "timelineThemeColorManageButton": {
     "message": "Einstellen"
+  },
+  "geminiWatermarkTitle": {
+    "message": "Nano Banana Wasserzeichen entfernen"
+  },
+  "geminiWatermarkHint": {
+    "message": "Zeigt Download-Optionen zum Entfernen des Wasserzeichens für von Gemini erzeugte Bilder an, damit du das Originalbild oder ein Bild ohne Wasserzeichen unten rechts herunterladen kannst."
+  },
+  "geminiWatermarkDownload": {
+    "message": "Bild ohne Wasserzeichen herunterladen"
+  },
+  "geminiWatermarkDownloadOriginal": {
+    "message": "Originalbild herunterladen"
+  },
+  "geminiWatermarkErrorGeneric": {
+    "message": "Entfernen des Wasserzeichens fehlgeschlagen"
+  },
+  "geminiWatermarkErrorNoImage": {
+    "message": "Kein Bild zum Verarbeiten gefunden"
+  },
+  "geminiWatermarkErrorTooSmall": {
+    "message": "Bild ist zu klein für die Entfernung des Wasserzeichens"
+  },
+  "geminiWatermarkErrorNoWatermark": {
+    "message": "Kein Gemini-Wasserzeichen erkannt"
+  },
+  "geminiWatermarkErrorUnreadable": {
+    "message": "Bildpixel können nicht gelesen werden (Browsersicherheit). Versuchen Sie den Original-Download"
   }
 }

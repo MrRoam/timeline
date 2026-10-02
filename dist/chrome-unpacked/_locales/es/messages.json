@@ -83,6 +83,9 @@
   "promptAllSettingsTooltip": {
     "message": "Todos los ajustes"
   },
+  "shareExtension": {
+    "message": "Compartir extensión"
+  },
   "promptCommonSmartInputHint": {
     "message": "En el cuadro de chat, configura cómo la tecla Enter controla los saltos de línea y el envío de mensajes"
   },
@@ -102,7 +105,7 @@
     "message": "Si Timeline te resulta útil, apóyalo con una estrella en GitHub."
   },
   "promptCommonMirrorSiteHint": {
-    "message": "Añade un nuevo sitio de chat de IA para desbloquear funciones como Cronología y prompts."
+    "message": "Adapta otros sitios de chat de IA para desbloquear funciones como Cronología, prompts y notas rápidas."
   },
   "promptCommonGithubStarButton": {
     "message": "Ir a GitHub"
@@ -834,13 +837,13 @@
     "message": "Adapt a new AI platform"
   },
   "mirrorSiteAdapterHeroDesc": {
-    "message": "¿No encuentras el sitio de chat de IA que usas? Ya sea un sitio espejo de IA, un chat de IA interno de tu empresa o un sitio de IA poco común, puedes solicitar una adaptación. Una vez adaptado, podrás desbloquear funciones como «Cronología», «prompts» y «notas rápidas»."
+    "message": "¿El sitio de chat de IA que usas no es compatible? Ya sea un chat de IA interno de tu empresa o un sitio de IA poco común, puedes solicitar una adaptación. Una vez adaptado, podrás desbloquear funciones como «Cronología», «prompts» y «notas rápidas»."
   },
   "mirrorSiteAdapterStartButton": {
     "message": "Start setup"
   },
   "mirrorSiteNativeSupportedTitle": {
-    "message": "Plataformas de IA compatibles de forma nativa:"
+    "message": "Plataformas de IA compatibles de forma nativa y sus sitios espejo:"
   },
   "mirrorSiteWizardStep1": {
     "message": "Open the AI site you want to adapt and start a new conversation"
@@ -920,6 +923,12 @@
   "timelineAICompleteToastHint": {
     "message": "Muestra un aviso cuando la respuesta de la IA termina y no estás en la posición más reciente"
   },
+  "preventAutoScrollLabel": {
+    "message": "Mantener la posición de lectura al enviar"
+  },
+  "preventAutoScrollHint": {
+    "message": "Cuando envías un mensaje mientras ves el historial anterior, la página permanece en tu posición de lectura actual en lugar de saltar al final"
+  },
   "timelineThemeColorLabel": {
     "message": "Color del tema de la línea de tiempo"
   },
@@ -928,5 +937,32 @@
   },
   "timelineThemeColorManageButton": {
     "message": "Configurar"
+  },
+  "geminiWatermarkTitle": {
+    "message": "Eliminador de marca de agua Nano Banana"
+  },
+  "geminiWatermarkHint": {
+    "message": "Muestra opciones de descarga con eliminación de marca de agua en imágenes generadas por Gemini, para descargar la imagen original o una imagen sin la marca de agua inferior derecha."
+  },
+  "geminiWatermarkDownload": {
+    "message": "Descargar imagen sin marca de agua"
+  },
+  "geminiWatermarkDownloadOriginal": {
+    "message": "Descargar imagen original"
+  },
+  "geminiWatermarkErrorGeneric": {
+    "message": "No se pudo quitar la marca de agua"
+  },
+  "geminiWatermarkErrorNoImage": {
+    "message": "No se encontró ninguna imagen para procesar"
+  },
+  "geminiWatermarkErrorTooSmall": {
+    "message": "La imagen es demasiado pequeña para quitar la marca de agua"
+  },
+  "geminiWatermarkErrorNoWatermark": {
+    "message": "No se detectó marca de agua de Gemini"
+  },
+  "geminiWatermarkErrorUnreadable": {
+    "message": "No se pueden leer los píxeles (seguridad del navegador). Pruebe a descargar la original"
   }
 }
