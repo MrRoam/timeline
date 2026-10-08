@@ -63,6 +63,9 @@ class TimelineManager {
         this.onVisibilityChange = null;
         this.onPotentialSendClick = null;
         this.onPotentialSendKeyDown = null;
+        this.onPotentialSendPointerDown = null;
+        this.onPotentialSendSubmit = null;
+        this.onUserScrollIntent = null;
         this.onAutoSendImageUploadChange = null;
         this.onAutoSendImageUploadCandidate = null;
         this.onAutoSendImageUploadsToggleClick = null;
@@ -132,7 +135,7 @@ class TimelineManager {
         // Markers and rendering
         this.markersVersion = 0;
 
-        this.debouncedRecalculateAndRender = this.debounce(this.recalculateAndRenderMarkers, TIMELINE_CONFIG.DEBOUNCE_DELAY);
+        this.debouncedRecalculateAndRender = this.debounce(this.recalculateAndRenderMarkers, TIMELINE_CONFIG.DEBOUNCE_DELAY, 500);
 
         // Star/Highlight feature state
         this.starred = new Set();
@@ -151,13 +154,15 @@ class TimelineManager {
         this._lastScrollSnapshot = null;
         this._lastPreBottomScrollSnapshot = null;
         this._pendingMessageSendSnapshot = null;
+        this._lastUserScrollIntentAt = 0;
         this._initialNavigationHandled = false;
         this._savedScrollPositionRestored = false;
         this.AUTO_BOTTOM_JUMP_CONFIRM_MS = 6000;
-        this.AUTO_BOTTOM_JUMP_PENDING_MS = 2500;
+        this.AUTO_BOTTOM_JUMP_PENDING_MS = 15000;
         this.AUTO_BOTTOM_JUMP_PRE_SNAPSHOT_MS = 2500;
-        this.AUTO_BOTTOM_JUMP_SEND_SNAPSHOT_MS = 5000;
+        this.AUTO_BOTTOM_JUMP_SEND_SNAPSHOT_MS = 15000;
         this.AUTO_BOTTOM_JUMP_MIN_DELTA = 80;
+        this.AUTO_BOTTOM_JUMP_BOTTOM_TOLERANCE = 48;
         this.SCROLL_POSITION_SAVE_DELAY = 750;
         this.pinned = new Set();
         this.pinnedIndexes = new Set();
@@ -1138,9 +1143,16 @@ class TimelineManager {
             const target = mutation.target?.nodeType === elementNode
                 ? mutation.target : mutation.target?.parentElement;
             // 角色标题可能先插入空节点，再补文本；流式正文文本仍直接忽略。
-            if (target?.matches?.('h4.sr-only')) return true;
-            if (mutation.type === 'characterData') return false;
+            const heading = target?.closest?.('h4.sr-only');
+            if (heading && !heading.closest('form, nav, aside, pre, code, .markdown, [role="dialog"]')) return true;
+            if (mutation.type === 'characterData') {
+                // 提问正文可能晚于轮次空壳挂载，不能等滚动时才补上摘要。
+                return !!target?.closest?.(this.adapter.getUserMessageSelector());
+            }
             if (mutation.type === 'attributes') {
+                if (mutation.attributeName === 'class') {
+                    return target?.tagName === 'H4' && /(?:^|\s)sr-only(?:\s|$)/.test(mutation.oldValue || '');
+                }
                 if (mutation.attributeName === 'data-is-intersecting') {
                     // true/false 只是滚动状态；只有属性新增或移除才表示结构准备就绪状态变化。
                     return mutation.oldValue === null
@@ -1149,6 +1161,10 @@ class TimelineManager {
                 return true;
             }
             if (mutation.type !== 'childList') return false;
+            if (target?.closest?.(this.adapter.getUserMessageSelector())
+                && !target.closest('button, nav, [data-ait-time], .ait-time-label')) {
+                return true; // 首次插入文本节点、附件或正文子树，也会改变提问摘要。
+            }
             if (Array.from(target?.children || []).some(child => child.matches?.('h4.sr-only'))) {
                 return true; // 标题先出现、正文随后挂载。
             }
@@ -1183,7 +1199,10 @@ class TimelineManager {
             options.attributeOldValue = true;
             options.attributeFilter = this._timelineStructureAttributeFilter;
         }
-        this.mutationObserver.observe(this.conversationContainer, options);
+        // 新提问可能挂在旧消息共同祖先之外；监听平台的稳定外层，但仍在消息容器内计算位置。
+        const root = this.adapter.getTimelineStructureObserverRoot?.(this.conversationContainer)
+            || this.conversationContainer;
+        this.mutationObserver.observe(root, options);
     }
 
     setupObservers() {
@@ -1198,7 +1217,8 @@ class TimelineManager {
             // ✅ 注意：padding 恢复逻辑已移至 scheduleScrollSync()
             // 当用户滚动时恢复 padding，而不是用定时器猜测 AI 回答是否结束
             
-            if (!this.conversationContainer?.isConnected) {
+            if (!this.conversationContainer?.isConnected || mutations.some(mutation =>
+                mutation.target && !this.conversationContainer.contains(mutation.target))) {
                 try { this.ensureContainersUpToDate(); } catch {}
             }
             this.debouncedRecalculateAndRender();
@@ -1664,23 +1684,7 @@ class TimelineManager {
         };
         this.scrollContainer.addEventListener('scroll', this.onScroll, { passive: true });
 
-        this.onPotentialSendClick = (e) => {
-            const submitButton = this.adapter.getComposerSubmitButton?.();
-            if (!submitButton || !e.target) return;
-            if (e.target === submitButton || submitButton.contains?.(e.target)) {
-                this._capturePotentialMessageSendSnapshot();
-            }
-        };
-        document.addEventListener('click', this.onPotentialSendClick, true);
-
-        this.onPotentialSendKeyDown = (e) => {
-            if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
-            const composerRoot = this.adapter.getComposerRoot?.();
-            if (composerRoot?.contains?.(e.target)) {
-                this._capturePotentialMessageSendSnapshot();
-            }
-        };
-        document.addEventListener('keydown', this.onPotentialSendKeyDown, true);
+        this.setupAutoBottomJumpTracking();
 
         this.onPageHide = () => {
             this.flushScrollPositionSave();
@@ -2321,6 +2325,7 @@ class TimelineManager {
 
     setScrollTop(scrollTop) {
         if (!this.scrollContainer || !Number.isFinite(scrollTop)) return false;
+        this._clearAutoBottomJumpTracking();
 
         if (this.scrollContainer === window) {
             try {
@@ -2359,16 +2364,77 @@ class TimelineManager {
         return this.restoreSavedScrollPosition();
     }
 
+    setupAutoBottomJumpTracking() {
+        const canSend = () => {
+            const button = this.adapter.getComposerSubmitButton?.();
+            return !!button && !button.disabled && button.getAttribute('disabled') === null
+                && button.getAttribute('aria-disabled') !== 'true'
+                && button.getAttribute('data-testid') !== 'stop-button'
+                && !this.adapter.isAIGenerating?.();
+        };
+        const onSendButton = (event) => {
+            const button = this.adapter.getComposerSubmitButton?.();
+            if (event.button > 0 || !canSend() || !button.contains?.(event.target)) return;
+            this._capturePotentialMessageSendSnapshot({ preserveRecent: event.type !== 'pointerdown' });
+        };
+        this.onPotentialSendPointerDown = onSendButton;
+        this.onPotentialSendClick = onSendButton;
+        this.onPotentialSendKeyDown = (event) => {
+            if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229 || !canSend()) return;
+            const prompt = this.adapter.getComposerRoot?.();
+            if (prompt?.contains?.(event.target) && event.target?.closest?.('textarea, [contenteditable="true"]')) {
+                this._capturePotentialMessageSendSnapshot();
+            }
+        };
+        this.onPotentialSendSubmit = (event) => {
+            if (canSend() && this.adapter.getComposerRoot?.()?.contains?.(event.target)) {
+                this._capturePotentialMessageSendSnapshot({ preserveRecent: true });
+            }
+        };
+        this.onUserScrollIntent = (event) => {
+            if (this.adapter.getComposerRoot?.()?.contains?.(event.target)) return;
+            if (event.type === 'keydown') {
+                if (!['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)
+                    || event.target?.closest?.('input, textarea, [contenteditable="true"]')) return;
+            } else if (!this.scrollContainer?.contains?.(event.target)
+                && !this.ui.timelineBar?.contains?.(event.target)) return;
+            if (event.type === 'pointerdown' && event.target !== this.scrollContainer
+                && !event.target?.closest?.('button, a, .ait-timeline-dot')) return;
+            this._clearAutoBottomJumpTracking();
+        };
+        document.addEventListener('pointerdown', this.onPotentialSendPointerDown, true);
+        document.addEventListener('click', this.onPotentialSendClick, true);
+        document.addEventListener('keydown', this.onPotentialSendKeyDown, true);
+        document.addEventListener('submit', this.onPotentialSendSubmit, true);
+        document.addEventListener('wheel', this.onUserScrollIntent, { capture: true, passive: true });
+        document.addEventListener('touchmove', this.onUserScrollIntent, { capture: true, passive: true });
+        document.addEventListener('keydown', this.onUserScrollIntent, true);
+        document.addEventListener('pointerdown', this.onUserScrollIntent, true);
+    }
+
+    _clearAutoBottomJumpTracking() {
+        this.pendingAutoBottomJump = null;
+        this._pendingMessageSendSnapshot = null;
+        this._lastScrollSnapshot = null;
+        this._lastPreBottomScrollSnapshot = null;
+        this._lastUserScrollIntentAt = Date.now();
+    }
+
     _createScrollSnapshot() {
         if (!this.scrollContainer || !this.markers?.length) return null;
         const activeId = this.pendingActiveId || this.activeTurnId;
         const activeIndex = this.markers.findIndex(marker => marker.id === activeId);
         const totalCount = this.markers.length;
+        const scrollTop = this._getScrollTop();
+        const { maxScrollTop, clientHeight } = this._getCleanScrollMetrics();
         return {
-            scrollTop: this._getScrollTop(),
+            scrollTop,
             activeIndex,
             totalCount,
             isLast: activeIndex === totalCount - 1,
+            // 激活最后一个问题不代表读到了回答底部；只在拿不到尺寸时回退到旧判断。
+            isAtBottom: Number.isFinite(maxScrollTop) && clientHeight > 0
+                ? maxScrollTop - scrollTop <= this.AUTO_BOTTOM_JUMP_BOTTOM_TOLERANCE : undefined,
             timestamp: Date.now(),
         };
     }
@@ -2383,7 +2449,7 @@ class TimelineManager {
         if (this._isUsablePreBottomSnapshot(snapshot, totalCount)) {
             this._lastPreBottomScrollSnapshot = snapshot;
         } else if (
-            snapshot.isLast &&
+            (snapshot.isAtBottom ?? snapshot.isLast) &&
             this._isUsablePreBottomSnapshot(previousSnapshot, totalCount) &&
             Math.abs(snapshot.scrollTop - previousSnapshot.scrollTop) >= this.AUTO_BOTTOM_JUMP_MIN_DELTA
         ) {
@@ -2393,13 +2459,21 @@ class TimelineManager {
         this._lastScrollSnapshot = snapshot;
     }
 
-    _capturePotentialMessageSendSnapshot() {
+    _capturePotentialMessageSendSnapshot({ preserveRecent = false } = {}) {
         if (this.adapter?.isReverseScroll?.()) return false;
+
+        // pointerdown 后，聚焦或宿主处理可能已滚动；click/submit 保留同一次发送的最早位置。
+        const previous = this._pendingMessageSendSnapshot;
+        if (preserveRecent && previous && Date.now() - previous.timestamp < 1000) {
+            return this._isUsablePreBottomSnapshot(previous, previous.totalCount);
+        }
 
         const snapshot = this._createScrollSnapshot();
         if (!snapshot) return false;
 
+        this.pendingAutoBottomJump = null;
         this._pendingMessageSendSnapshot = snapshot;
+        this._lastUserScrollIntentAt = 0;
         return this._isUsablePreBottomSnapshot(snapshot, snapshot.totalCount);
     }
 
@@ -2407,9 +2481,8 @@ class TimelineManager {
         return !!snapshot &&
             Number.isFinite(snapshot.scrollTop) &&
             snapshot.totalCount === previousCount &&
-            snapshot.isLast === false &&
-            snapshot.activeIndex >= 0 &&
-            snapshot.activeIndex < previousCount - 1;
+            (typeof snapshot.isAtBottom === 'boolean' ? !snapshot.isAtBottom
+                : snapshot.isLast === false && snapshot.activeIndex >= 0 && snapshot.activeIndex < previousCount - 1);
     }
 
     _captureAutoBottomJumpCandidate(previousCount, currentCount) {
@@ -2417,7 +2490,6 @@ class TimelineManager {
         if (currentCount <= previousCount || previousCount <= 0) return false;
         if (this.adapter?.isReverseScroll?.()) return false;
 
-        const currentActiveIndex = this.markers.findIndex(marker => marker.id === this.activeTurnId);
         const snapshot = this._lastScrollSnapshot;
         const now = Date.now();
         const sendSnapshot = this._pendingMessageSendSnapshot;
@@ -2430,7 +2502,9 @@ class TimelineManager {
             this._isUsablePreBottomSnapshot(sendSnapshot, previousCount);
         const sendSnapshotBlocksFallback =
             sendSnapshotIsRecent &&
-            sendSnapshot.isLast === true;
+            (sendSnapshot.isAtBottom ?? sendSnapshot.isLast) === true;
+
+        if (!sendSnapshotIsRecent && now - this._lastUserScrollIntentAt < this.AUTO_BOTTOM_JUMP_PRE_SNAPSHOT_MS) return false;
 
         if (sendSnapshot && !sendSnapshotIsRecent) {
             this._pendingMessageSendSnapshot = null;
@@ -2441,27 +2515,26 @@ class TimelineManager {
             return false;
         }
 
-        const snapshotUsable = this._isUsablePreBottomSnapshot(snapshot, previousCount);
+        const snapshotUsable = this._isUsablePreBottomSnapshot(snapshot, previousCount)
+            && now - snapshot.timestamp <= this.AUTO_BOTTOM_JUMP_PRE_SNAPSHOT_MS;
         const preBottomSnapshot = this._lastPreBottomScrollSnapshot;
         const overwrittenSnapshotUsable =
             !snapshotUsable &&
             this._isUsablePreBottomSnapshot(preBottomSnapshot, previousCount) &&
-            snapshot?.isLast === true &&
+            (snapshot?.isAtBottom ?? snapshot?.isLast) === true &&
             snapshot.totalCount === previousCount &&
             Number.isFinite(snapshot.scrollTop) &&
             now - snapshot.timestamp <= this.AUTO_BOTTOM_JUMP_PRE_SNAPSHOT_MS &&
-            Math.abs(snapshot.scrollTop - preBottomSnapshot.scrollTop) >= this.AUTO_BOTTOM_JUMP_MIN_DELTA;
+            now - preBottomSnapshot.timestamp <= this.AUTO_BOTTOM_JUMP_PRE_SNAPSHOT_MS &&
+            snapshot.scrollTop - preBottomSnapshot.scrollTop >= this.AUTO_BOTTOM_JUMP_MIN_DELTA;
 
-        const activeWasBeforeLast = currentActiveIndex >= 0 && currentActiveIndex < this.markers.length - 1;
-        if (!sendSnapshotUsable && !snapshotUsable && !overwrittenSnapshotUsable && !activeWasBeforeLast) return false;
+        if (!sendSnapshotUsable && !snapshotUsable && !overwrittenSnapshotUsable) return false;
 
         const capturedScrollTop = sendSnapshotUsable
             ? sendSnapshot.scrollTop
             : snapshotUsable
                 ? snapshot.scrollTop
-                : overwrittenSnapshotUsable
-                    ? preBottomSnapshot.scrollTop
-                    : this._getScrollTop();
+                : preBottomSnapshot.scrollTop;
         if (!Number.isFinite(capturedScrollTop)) return false;
 
         this.pendingAutoBottomJump = {
@@ -2481,6 +2554,21 @@ class TimelineManager {
     }
 
     _maybeApplyPendingAutoBottomJumpPin() {
+        const now = Date.now();
+        const send = this._pendingMessageSendSnapshot;
+        if (send && now - send.timestamp > this.AUTO_BOTTOM_JUMP_SEND_SNAPSHOT_MS) {
+            this._pendingMessageSendSnapshot = null;
+        } else if (!this.pendingAutoBottomJump && this._isUsablePreBottomSnapshot(send, send?.totalCount)
+            && (this.markers.length > send.totalCount || this.adapter.isAIGenerating?.())) {
+            // 宿主可能先跳底再挂载提问；返回点不依赖 marker 数量变化的先后顺序。
+            this.pendingAutoBottomJump = {
+                scrollTop: send.scrollTop,
+                previousCount: send.totalCount,
+                currentCount: this.markers.length,
+                createdAt: send.timestamp,
+                expiresAt: send.timestamp + this.AUTO_BOTTOM_JUMP_SEND_SNAPSHOT_MS,
+            };
+        }
         const pending = this.pendingAutoBottomJump;
         if (!pending) return false;
 
@@ -2496,14 +2584,22 @@ class TimelineManager {
 
         const activeId = this.pendingActiveId || this.activeTurnId;
         const activeIndex = this.markers.findIndex(marker => marker.id === activeId);
-        if (activeIndex !== this.markers.length - 1) return false;
-
         const currentScrollTop = this._getScrollTop();
-        if (Math.abs(currentScrollTop - pending.scrollTop) < this.AUTO_BOTTOM_JUMP_MIN_DELTA) {
+        const { maxScrollTop, clientHeight } = this._getCleanScrollMetrics();
+        const last = this.markers[this.markers.length - 1];
+        const atDestination = Number.isFinite(maxScrollTop) && clientHeight > 0
+            ? maxScrollTop - currentScrollTop <= this.AUTO_BOTTOM_JUMP_BOTTOM_TOLERANCE
+                || (this.markers.length > pending.previousCount && Number.isFinite(last.offsetTop)
+                    && Math.abs(currentScrollTop - last.offsetTop) <= this.ACTIVATE_AHEAD)
+            : activeIndex === this.markers.length - 1;
+        if (!atDestination || currentScrollTop - pending.scrollTop < this.AUTO_BOTTOM_JUMP_MIN_DELTA) {
             return false;
         }
 
         this.pendingAutoBottomJump = null;
+        this._pendingMessageSendSnapshot = null;
+        this._lastScrollSnapshot = null;
+        this._lastPreBottomScrollSnapshot = null;
 
         if (this.temporaryPin) {
             return this._showAutoBottomJumpFlashCandidate(pending.scrollTop);
@@ -2789,6 +2885,7 @@ class TimelineManager {
     
     smoothScrollTo(targetElement, duration = 600) {
         if (!targetElement || !this.scrollContainer) return;
+        this._clearAutoBottomJumpTracking();
 
         this._recalcMarkerPositions();
         
@@ -2840,12 +2937,28 @@ class TimelineManager {
         });
     }
 
-    debounce(func, delay) {
-        let timeout;
-        return (...args) => {
+    debounce(func, delay, maxWait = 0) {
+        let timeout = null;
+        let deadline = null;
+        let latestArgs;
+        const cancel = () => {
             clearTimeout(timeout);
-            timeout = setTimeout(() => func.apply(this, args), delay);
+            clearTimeout(deadline);
+            timeout = deadline = null;
         };
+        const invoke = () => {
+            cancel();
+            if (!this._destroyed) func.apply(this, latestArgs);
+        };
+        const debounced = (...args) => {
+            latestArgs = args;
+            clearTimeout(timeout);
+            timeout = setTimeout(invoke, delay);
+            // 持续结构变化也必须刷新，不能让回答输出不断推迟新问题的显示。
+            if (maxWait > 0 && deadline === null) deadline = setTimeout(invoke, maxWait);
+        };
+        debounced.cancel = cancel;
+        return debounced;
     }
 
     // Read numeric CSS var from the timeline bar element
@@ -3912,6 +4025,12 @@ class TimelineManager {
         TimelineUtils.removeEventListenerSafe(document, 'visibilitychange', this.onVisibilityChange);
         TimelineUtils.removeEventListenerSafe(document, 'click', this.onPotentialSendClick, true);
         TimelineUtils.removeEventListenerSafe(document, 'keydown', this.onPotentialSendKeyDown, true);
+        TimelineUtils.removeEventListenerSafe(document, 'pointerdown', this.onPotentialSendPointerDown, true);
+        TimelineUtils.removeEventListenerSafe(document, 'submit', this.onPotentialSendSubmit, true);
+        TimelineUtils.removeEventListenerSafe(document, 'wheel', this.onUserScrollIntent, true);
+        TimelineUtils.removeEventListenerSafe(document, 'touchmove', this.onUserScrollIntent, true);
+        TimelineUtils.removeEventListenerSafe(document, 'keydown', this.onUserScrollIntent, true);
+        TimelineUtils.removeEventListenerSafe(document, 'pointerdown', this.onUserScrollIntent, true);
         TimelineUtils.removeEventListenerSafe(this.ui.timelineBar, 'mouseover', this.onTimelineBarOver);
         TimelineUtils.removeEventListenerSafe(this.ui.timelineBar, 'mouseout', this.onTimelineBarOut);
         TimelineUtils.removeEventListenerSafe(this.ui.timelineBar, 'focusin', this.onTimelineBarFocusIn);
@@ -3936,6 +4055,8 @@ class TimelineManager {
         this.resizeIdleRICId = TimelineUtils.clearIdleCallbackSafe(this.resizeIdleRICId);
         // ✅ 移除：longPressTimer 已删除
         this.zeroTurnsTimer = TimelineUtils.clearTimerSafe(this.zeroTurnsTimer);
+        this.debouncedRecalculateAndRender.cancel?.();
+        this.debouncedUpdateScrollPadding.cancel?.();
         this.clearAutoSendImageUploadPending();
         this._clearAutoBottomJumpFlashCandidate();
         this.showRafId = TimelineUtils.clearRafSafe(this.showRafId);
@@ -3980,6 +4101,9 @@ class TimelineManager {
         this.onVisibilityChange = null;
         this.onPotentialSendClick = null;
         this.onPotentialSendKeyDown = null;
+        this.onPotentialSendPointerDown = null;
+        this.onPotentialSendSubmit = null;
+        this.onUserScrollIntent = null;
         this.onAutoSendImageUploadChange = null;
         this.onAutoSendImageUploadCandidate = null;
         this.onAutoSendImageUploadsToggleClick = null;

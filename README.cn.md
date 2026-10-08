@@ -132,7 +132,7 @@ Timeline 的核心数据默认保存在浏览器本地，包括收藏、文件�
 
 ## 本地开发
 
-本 Fork 当前只启用 ChatGPT 时间线与收藏相关功能。`4.6.17` 已加入 ChatGPT 新 UI 兼容修复；调查依据、验证边界与保留原数据的更新步骤见 [兼容修复说明](./docs/chatgpt-2026-09-compatibility.md)。
+本 Fork 当前只启用 ChatGPT 时间线与收藏相关功能。`4.6.18` 改进了发送后自动跳底的返回点识别和新提问刷新，见 [本次修复说明](./docs/chatgpt-send-scroll-refresh.md)。`4.6.17` 的新 UI 兼容修复依据见 [兼容修复说明](./docs/chatgpt-2026-09-compatibility.md)。
 
 本仓库是浏览器扩展项目，没有前端构建步骤。开发时可以直接加载源码目录：
 

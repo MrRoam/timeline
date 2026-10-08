@@ -78,6 +78,7 @@ class Document {
     }
     querySelectorAll(selector) { return this.body.querySelectorAll(selector); }
     querySelector(selector) { return this.body.querySelector(selector); }
+    getElementById(id) { return this.querySelector(`[id="${id}"]`); }
     addEventListener(type, handler) {
         const handlers = this.listeners.get(type) || new Set();
         handlers.add(handler);

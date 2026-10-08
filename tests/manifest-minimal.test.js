@@ -22,13 +22,22 @@ test('manifest only injects the retained ChatGPT timeline feature set', () => {
 
     const required = [
         'js/apiCapture/chatgpt.js',
+        'js/timeline/adapters/base.js',
+        'js/timeline/adapters/chatgpt.js',
         'js/timeline/timeline-manager.js',
+        'js/timeline/index.js',
         'js/timeline/question-list/index.js',
         'js/timeline/star-input-modal/star-input-modal.js',
         'js/panelModal/tabs/starred/index.js',
     ];
     for (const file of required) {
         assert.ok(jsFiles.includes(file), `${file} should stay injected`);
+    }
+    const ordered = ['js/timeline/adapters/base.js', 'js/timeline/adapters/chatgpt.js',
+        'js/timeline/timeline-manager.js', 'js/timeline/index.js'];
+    for (let index = 1; index < ordered.length; index++) {
+        assert.ok(jsFiles.indexOf(ordered[index - 1]) < jsFiles.indexOf(ordered[index]),
+            `${ordered[index - 1]} should load before ${ordered[index]}`);
     }
 
     const apiCaptureScript = manifest.content_scripts.find(script =>

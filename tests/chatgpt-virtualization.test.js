@@ -24,13 +24,13 @@ function loadChatGPTAdapter(document) {
             }
         },
         matchesPlatform: () => true,
-        ContainerFinder: { findConversationContainer: () => null },
         window: { getComputedStyle: element => ({ display: 'contents', visibility: 'visible', position: 'static', ...element.style }) },
         console,
     };
     vm.createContext(context);
     vm.runInContext(
-        `${baseSource}\n${adapterSource}\nthis.ChatGPTAdapter = ChatGPTAdapter;`,
+        `${fs.readFileSync(path.join(__dirname, '..', 'js/timeline/container-finder.js'), 'utf8')}\n`
+        + `${baseSource}\n${adapterSource}\nthis.ChatGPTAdapter = ChatGPTAdapter;`,
         context
     );
     return new context.ChatGPTAdapter();
@@ -105,6 +105,30 @@ test('ChatGPT virtualized shells produce every user turn before scrolling', () =
     );
     assert.equal(adapter.extractText(turns[0]), '[未加载的提问]');
     assert.equal(adapter.extractText(turns[4]), '第三个问题');
+});
+
+test('ChatGPT recognizes newly appended empty user shells and keeps known roles after virtualization', () => {
+    const document = new Document();
+    const main = new Element('main');
+    document.body.append(main);
+    const shell = (id, role) => {
+        const element = new Element('section', { attrs: { 'data-turn-id-container': id, 'data-is-intersecting': 'false' } });
+        if (role) element.append(new Element('article', { attrs: { 'data-turn': role } }));
+        main.append(element);
+        return element;
+    };
+    const first = shell('u1', 'user');
+    const answer = shell('a1', 'assistant');
+    const adapter = loadChatGPTAdapter(document);
+    adapter.prepareTimelineNodes({ force: true });
+    first.children = [];
+    answer.children = [];
+    const next = shell('u2');
+    shell('a2');
+    adapter.invalidateTimelineNodes();
+    adapter.prepareTimelineNodes();
+    assert.deepEqual(document.querySelectorAll(adapter.getUserMessageSelector()), [first, next]);
+    assert.equal(next.getAttribute('data-ait-turn'), 'user');
 });
 
 class EventDocument {
@@ -229,6 +253,95 @@ function headingFixture() {
     };
     return { document, main, turns, add };
 }
+
+function createHeadingTimeline(document, adapter) {
+    const observers = [];
+    class Observer {
+        constructor(callback) { this.callback = callback; observers.push(this); }
+        observe(target, options) { this.target = target; this.options = options; }
+        disconnect() {}
+    }
+    const context = { document, location: { pathname: '/c/test', href: 'https://chatgpt.com/c/test' }, console,
+        window: { getComputedStyle: element => ({ overflowY: 'visible', ...element.style }) },
+        MutationObserver: Observer, ResizeObserver: Observer, IntersectionObserver: Observer,
+        CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init.detail; } },
+        TIMELINE_CONFIG: { DEBOUNCE_DELAY: 350 },
+        TimelineUtils: { clearTimerSafe: () => null },
+        setTimeout: () => 0, clearTimeout() {}, requestAnimationFrame: () => 0 };
+    vm.createContext(context);
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js/timeline/timeline-manager.js'), 'utf8')
+        + '\nthis.Manager = TimelineManager;', context);
+    const manager = new context.Manager(adapter);
+    for (const name of ['injectToggleButton', '_updateScrollPadding', 'updateTimelineHeight', 'updateTimelineGeometry',
+        'syncTimelineTrackToMain', 'updateVirtualRangeAndRender', 'updateActiveDotUI', 'scheduleScrollSync',
+        'updateIntersectionObserverTargets', 'setupDomCheckObserver']) manager[name] = () => {};
+    manager.handleInitialNavigationOrRestore = async () => false;
+    manager.debouncedRecalculateAndRender = () => manager.recalculateAndRenderMarkers();
+    manager.ui.timelineBar = manager.ui.trackContent = new Element('div');
+    return { manager, observers };
+}
+
+test('ChatGPT refreshes a new heading question outside the old connected message root and fills delayed text', () => {
+    const { document, main, turns, add } = headingFixture();
+    const first = add('You said:', '第一个问题');
+    const second = add('You said:', '第二个问题');
+    const history = new Element('div');
+    first.element.remove();
+    second.element.remove();
+    turns.append(history.append(first.element, second.element));
+    turns.style.overflowY = 'auto';
+    Object.assign(turns, { scrollTop: 0, scrollHeight: 6000, clientHeight: 800 });
+    const adapter = loadChatGPTAdapter(document);
+    adapter.prepareTimelineNodes({ force: true });
+    const { manager, observers } = createHeadingTimeline(document, adapter);
+    manager.conversationContainer = adapter.findConversationContainer(first.element);
+    manager.scrollContainer = turns;
+    manager.recalculateAndRenderMarkers();
+    manager.setupObservers();
+    assert.equal(manager.conversationContainer, history);
+    assert.equal(observers[0].target, main);
+
+    const third = add('', '');
+    observers[0].callback([{ type: 'childList', target: turns, addedNodes: [third.element], removedNodes: [] }]);
+    assert.equal(manager.markers.length, 2);
+    const label = new Element('span', { text: 'You said:' });
+    third.heading.append(label);
+    observers[0].callback([{ type: 'characterData', target: { parentElement: label } }]);
+    assert.equal(history.isConnected, true);
+    assert.equal(manager.conversationContainer, turns);
+    assert.equal(manager.markers.length, 3);
+    third.body.textContent = '刚发送';
+    observers[0].callback([{ type: 'childList', target: third.body,
+        addedNodes: [{ nodeType: 3 }], removedNodes: [] }]);
+    assert.equal(manager.markers[2].summary, '刚发送');
+    third.body.textContent = '刚发送的新问题';
+    observers[0].callback([{ type: 'characterData', target: { parentElement: third.body } }]);
+    assert.equal(manager.markers[2].summary, '刚发送的新问题');
+    const answer = add('ChatGPT said:', '持续输出的回答');
+    assert.equal(manager.mutationTouchesUserTurns([{ type: 'characterData', target: { parentElement: answer.body } }]), false);
+    assert.equal(manager.mutationTouchesUserTurns([{ type: 'childList', target: answer.body,
+        addedNodes: [{ nodeType: 3 }], removedNodes: [] }]), false);
+});
+
+test('ChatGPT detects role headings whose sr-only class arrives late and current composer button variants', () => {
+    const { document, main, add } = headingFixture();
+    const { heading } = add('You said:', '提问');
+    heading.removeAttribute('class');
+    const adapter = loadChatGPTAdapter(document);
+    const { manager } = createHeadingTimeline(document, adapter);
+    heading.setAttribute('class', 'sr-only');
+    assert.equal(manager.mutationTouchesUserTurns([{ type: 'attributes', target: heading, attributeName: 'class', oldValue: null }]), true);
+    assert.equal(manager.mutationTouchesUserTurns([{ type: 'attributes', target: main, attributeName: 'class', oldValue: null }]), false);
+    const form = new Element('form');
+    const button = new Element('button', { attrs: { 'data-testid': 'send-button' } });
+    main.append(form.append(button));
+    assert.equal(adapter.getComposerSubmitButton(), button);
+    assert.equal(adapter.getComposerRoot(), form);
+    button.setAttribute('data-testid', 'stop-button');
+    assert.equal(adapter.isAIGenerating(), true);
+    form.remove();
+    assert.equal(adapter.getComposerRoot(), null);
+});
 
 test('ChatGPT new UI initializes from role headings and excludes composer and answer content', () => {
     const { document, main, add } = headingFixture();
@@ -429,5 +542,5 @@ test('ChatGPT zero-box new UI messages use body geometry for positions, highligh
     assert.equal(manager._getMessageRect(legacy).top, 321);
     assert.equal(manager._getMessageHeight(legacy), 78);
     assert.equal(manager.mutationTouchesUserTurns([{ type: 'characterData', target: { parentElement: elements[0].querySelector('h4') } }]), true);
-    assert.equal(manager.mutationTouchesUserTurns([{ type: 'characterData', target: { parentElement: elements[0].querySelector('div') } }]), false);
+    assert.equal(manager.mutationTouchesUserTurns([{ type: 'characterData', target: { parentElement: elements[0].querySelector('div') } }]), true);
 });

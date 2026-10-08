@@ -139,12 +139,21 @@ class ChatGPTAdapter extends SiteAdapter {
         let nextRole = null;
         for (let index = containers.length - 1; index >= 0; index--) {
             const realRole = containers[index].querySelector('[data-turn]')?.getAttribute('data-turn');
-            let role = realRole === 'user' || realRole === 'assistant' ? realRole : null;
+            const knownRole = containers[index].getAttribute('data-ait-turn');
+            let role = realRole === 'user' || realRole === 'assistant' ? realRole
+                : knownRole === 'user' || knownRole === 'assistant' ? knownRole : null;
             if (!role && nextRole) {
                 role = nextRole === 'user' ? 'assistant' : 'user';
             }
             roles[index] = role;
             if (role) nextRole = role;
+        }
+
+        // 发送时末尾空壳可能先于正文出现；从已知轮次向后补齐，不能只倒序推导。
+        for (let index = 1; index < roles.length; index++) {
+            if (!roles[index] && roles[index - 1]) {
+                roles[index] = roles[index - 1] === 'user' ? 'assistant' : 'user';
+            }
         }
 
         // ChatGPT 可能在开头保留隐藏占位轮；不能把推断出的 assistant 当作首个提问。
@@ -294,8 +303,13 @@ class ChatGPTAdapter extends SiteAdapter {
         return { characterData: true };
     }
 
+    getTimelineStructureObserverRoot(container) {
+        const main = document.querySelector('main');
+        return main?.contains(container) ? main : container;
+    }
+
     getTimelineStructureAttributeFilter() {
-        return ['data-turn-id-container', 'data-is-intersecting', 'data-turn'];
+        return ['data-turn-id-container', 'data-turn-id', 'data-is-intersecting', 'data-turn', 'class'];
     }
 
     async matches(url) {
@@ -639,7 +653,7 @@ class ChatGPTAdapter extends SiteAdapter {
      * @returns {boolean}
      */
     isAIGenerating() {
-        const submitButton = document.getElementById('composer-submit-button');
+        const submitButton = this.getComposerSubmitButton();
         // ✅ 必须返回 boolean，找不到按钮视为 false（未生成），而不是 null（未实现）
         return !!(submitButton && submitButton.getAttribute('data-testid') === 'stop-button');
     }
@@ -650,7 +664,7 @@ class ChatGPTAdapter extends SiteAdapter {
 
     getComposerSubmitButton() {
         return document.getElementById('composer-submit-button') ||
-            document.querySelector('#composer-submit-button');
+            document.querySelector('button[data-testid="send-button"], button[data-testid="stop-button"]');
     }
 
     getComposerRoot() {
@@ -660,7 +674,7 @@ class ChatGPTAdapter extends SiteAdapter {
             submitButton?.closest('form') ||
             prompt?.closest('[data-testid*="composer"]') ||
             submitButton?.parentElement ||
-            document;
+            prompt || null;
     }
 
     isImageUploadInProgress() {

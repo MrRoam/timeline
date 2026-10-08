@@ -108,6 +108,15 @@ class FakeElement {
         return this.parentNode;
     }
 
+    closest(selector) {
+        let node = this;
+        while (node) {
+            if (node.matches(selector)) return node;
+            node = node.parentElement;
+        }
+        return null;
+    }
+
     contains(target) {
         if (target === this) return true;
         return this.children.some(child => child.contains?.(target));
@@ -211,6 +220,21 @@ class FakeDocument {
     constructor() {
         this.body = new FakeElement('body');
         this.documentElement = new FakeElement('html');
+        this.eventListeners = new Map();
+    }
+
+    addEventListener(type, handler) {
+        const listeners = this.eventListeners.get(type) || new Set();
+        listeners.add(handler);
+        this.eventListeners.set(type, listeners);
+    }
+
+    removeEventListener(type, handler) {
+        this.eventListeners.get(type)?.delete(handler);
+    }
+
+    dispatchEvent(event) {
+        this.eventListeners.get(event.type)?.forEach(handler => handler(event));
     }
 
     createElement(tagName) {
@@ -975,6 +999,170 @@ test('auto bottom jump does not reuse a stale middle position when message send 
     assert.equal(manager._capturePotentialMessageSendSnapshot(), false);
     assert.equal(manager._captureAutoBottomJumpCandidate(3, 4), false);
     assert.equal(manager.pendingAutoBottomJump, null);
+});
+
+test('sending while reading the last long answer preserves the position, including a one-question chat', () => {
+    for (const count of [1, 3]) {
+        const { manager, document } = createManager();
+        manager.markers = Array.from({ length: count }, (_, index) => makeMarker(document, `chatgpt-${index}`));
+        manager.activeTurnId = manager.markers.at(-1).id;
+        manager.scrollContainer = { scrollTop: 450, scrollHeight: 6000, clientHeight: 800 };
+        assert.equal(manager._capturePotentialMessageSendSnapshot(), true);
+        assert.equal(manager._captureAutoBottomJumpCandidate(count, count + 1), true);
+        manager.markers.push(makeMarker(document, 'new-question'));
+        manager.scrollContainer.scrollHeight = 7000;
+        manager.scrollContainer.scrollTop = 6200;
+        // 激活状态尚未同步，也必须能识别真正到达底部。
+        assert.equal(manager._maybeApplyPendingAutoBottomJumpPin(), true);
+        assert.equal(manager.temporaryPin.scrollTop, 450);
+    }
+});
+
+test('send snapshot survives a jump before markers refresh and a response delayed by six seconds', () => {
+    const { manager, document } = createManager();
+    manager.markers = [makeMarker(document, 'chatgpt-1')];
+    manager.activeTurnId = 'chatgpt-1';
+    manager.scrollContainer = { scrollTop: 450, scrollHeight: 6000, clientHeight: 800 };
+    manager._capturePotentialMessageSendSnapshot();
+    manager._pendingMessageSendSnapshot.timestamp -= 6000;
+    manager.scrollContainer.scrollTop = 5200;
+    // 不接受单独聚焦引起的滚动；宿主开始生成才确认发送。
+    assert.equal(manager._maybeApplyPendingAutoBottomJumpPin(), false);
+    manager.adapter.isAIGenerating = () => true;
+    assert.equal(manager._maybeApplyPendingAutoBottomJumpPin(), true);
+    assert.equal(manager.temporaryPin.scrollTop, 450);
+    manager._recordScrollSnapshot();
+    assert.equal(manager._captureAutoBottomJumpCandidate(1, 2), false);
+    assert.equal(manager.autoBottomJumpFlashMarker, null);
+});
+
+test('actual bottom position blocks a false return point even when the active marker is stale', () => {
+    const { manager, document } = createManager();
+    manager.markers = [makeMarker(document, 'chatgpt-1'), makeMarker(document, 'chatgpt-2')];
+    manager.activeTurnId = 'chatgpt-1';
+    manager.scrollContainer = { scrollTop: 5200, scrollHeight: 6000, clientHeight: 800 };
+    assert.equal(manager._capturePotentialMessageSendSnapshot(), false);
+    assert.equal(manager._captureAutoBottomJumpCandidate(2, 3), false);
+});
+
+test('a host jump aligning the new prompt at the top preserves the reading point before the physical bottom', () => {
+    const { manager, document } = createManager();
+    manager.markers = [makeMarker(document, 'chatgpt-1')];
+    manager.activeTurnId = 'chatgpt-1';
+    manager.scrollContainer = { scrollTop: 450, scrollHeight: 6000, clientHeight: 800 };
+    manager._capturePotentialMessageSendSnapshot();
+    manager._captureAutoBottomJumpCandidate(1, 2);
+    const next = makeMarker(document, 'chatgpt-2');
+    next.offsetTop = 5300;
+    manager.markers.push(next);
+    manager.scrollContainer.scrollHeight = 8000;
+    manager.scrollContainer.scrollTop = 5280;
+    assert.equal(manager._maybeApplyPendingAutoBottomJumpPin(), true);
+    assert.equal(manager.temporaryPin.scrollTop, 450);
+});
+
+test('user wheel input cancels pending auto-jump detection instead of treating deliberate scrolling as automatic', () => {
+    const { manager, document } = createManager();
+    const scroll = document.createElement('main');
+    document.body.appendChild(scroll);
+    Object.assign(scroll, { scrollTop: 450, scrollHeight: 6000, clientHeight: 800 });
+    manager.scrollContainer = scroll;
+    manager.markers = [makeMarker(document, 'chatgpt-1')];
+    manager.activeTurnId = 'chatgpt-1';
+    manager.setupAutoBottomJumpTracking();
+    manager._capturePotentialMessageSendSnapshot();
+    manager._captureAutoBottomJumpCandidate(1, 2);
+    document.dispatchEvent({ type: 'wheel', target: scroll });
+    scroll.scrollTop = 5200;
+    manager.adapter.isAIGenerating = () => true;
+    assert.equal(manager._maybeApplyPendingAutoBottomJumpPin(), false);
+    manager._recordScrollSnapshot();
+    assert.equal(manager._captureAutoBottomJumpCandidate(1, 2), false);
+    assert.equal(manager.temporaryPin, null);
+});
+
+test('send tracking captures pointerdown before focus scroll and ignores disabled, stop, newline and IME actions', () => {
+    const { manager, document } = createManager();
+    const scroll = document.createElement('main');
+    const composer = document.createElement('form');
+    const prompt = document.createElement('div');
+    prompt.setAttribute('contenteditable', 'true');
+    const button = document.createElement('button');
+    composer.appendChild(prompt);
+    composer.appendChild(button);
+    scroll.appendChild(composer);
+    document.body.appendChild(scroll);
+    Object.assign(scroll, { scrollTop: 450, scrollHeight: 6000, clientHeight: 800 });
+    manager.scrollContainer = scroll;
+    manager.markers = [makeMarker(document, 'chatgpt-1')];
+    manager.activeTurnId = 'chatgpt-1';
+    manager.adapter.getComposerRoot = () => composer;
+    manager.adapter.getComposerSubmitButton = () => button;
+    manager.setupAutoBottomJumpTracking();
+    document.dispatchEvent({ type: 'pointerdown', target: button, button: 0 });
+    scroll.scrollTop = 5200;
+    document.dispatchEvent({ type: 'click', target: button });
+    document.dispatchEvent({ type: 'submit', target: composer });
+    assert.equal(manager._pendingMessageSendSnapshot.scrollTop, 450);
+
+    manager._clearAutoBottomJumpTracking();
+    button.disabled = true;
+    document.dispatchEvent({ type: 'click', target: button });
+    button.disabled = false;
+    button.setAttribute('data-testid', 'stop-button');
+    document.dispatchEvent({ type: 'click', target: button });
+    button.removeAttribute('data-testid');
+    for (const event of [
+        { target: prompt, shiftKey: true }, { target: prompt, isComposing: true },
+        { target: prompt, keyCode: 229 }, { target: scroll }, { target: button },
+    ]) document.dispatchEvent({ type: 'keydown', key: 'Enter', ...event });
+    assert.equal(manager._pendingMessageSendSnapshot, null);
+    scroll.scrollTop = 450;
+    document.dispatchEvent({ type: 'keydown', key: 'Enter', target: prompt });
+    assert.equal(manager._pendingMessageSendSnapshot.scrollTop, 450);
+});
+
+test('moving upward after a question is appended does not create an auto bottom return point', () => {
+    const { manager, document } = createManager();
+    manager.markers = [makeMarker(document, 'chatgpt-1'), makeMarker(document, 'chatgpt-2')];
+    manager.activeTurnId = 'chatgpt-1';
+    manager.scrollContainer = { scrollTop: 450 };
+    manager._capturePotentialMessageSendSnapshot();
+    manager._captureAutoBottomJumpCandidate(2, 3);
+    manager.markers.push(makeMarker(document, 'chatgpt-3'));
+    manager.activeTurnId = 'chatgpt-3';
+    manager.scrollContainer.scrollTop = 200;
+    assert.equal(manager._maybeApplyPendingAutoBottomJumpPin(), false);
+    assert.equal(manager.temporaryPin, null);
+});
+
+test('marker refresh has a bounded wait during continuous changes and can be cancelled on teardown', () => {
+    let clock = 0;
+    let id = 0;
+    const timers = new Map();
+    const { manager } = createManager({
+        setTimeout: (callback, delay = 0) => { timers.set(++id, { callback, at: clock + delay }); return id; },
+        clearTimeout: timer => timers.delete(timer),
+    });
+    const advance = duration => {
+        const end = clock + duration;
+        while (true) {
+            const next = [...timers].sort((a, b) => a[1].at - b[1].at).find(([, timer]) => timer.at <= end);
+            if (!next) break;
+            clock = next[1].at;
+            timers.delete(next[0]);
+            next[1].callback();
+        }
+        clock = end;
+    };
+    const refreshed = [];
+    const refresh = manager.debounce(value => refreshed.push(value), 350, 500);
+    for (let value = 0; value < 5; value++) { refresh(value); advance(100); }
+    assert.deepEqual(refreshed, [4]);
+    refresh('obsolete');
+    refresh.cancel();
+    advance(600);
+    assert.deepEqual(refreshed, [4]);
 });
 
 test('sync scroll position save starts storage write immediately for page close handlers', () => {
