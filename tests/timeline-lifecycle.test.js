@@ -100,6 +100,50 @@ test('timeline retries a failed initialization without treating found messages a
     assert(entry.manager());
 });
 
+test('DOM changes detect chat navigation without a url:change event and replace the connected old timeline', async () => {
+    const { state, location, entry } = loadEntry({ pathname: '/c/first', hasTurns: true });
+    await settle();
+    const oldManager = entry.manager();
+    assert(oldManager.conversationContainer.isConnected);
+
+    Object.assign(location, { pathname: '/c/second', href: 'https://chatgpt.com/c/second' });
+    state.readiness();
+    await settle();
+
+    assert.equal(state.destroyed, 1);
+    assert.equal(state.attempts, 2);
+    assert(entry.manager());
+    assert.notEqual(entry.manager(), oldManager);
+
+    // 延迟到达的轮询事件不应重复销毁刚创建的实例。
+    await entry.handleUrlChange();
+    assert.equal(state.destroyed, 1);
+    assert.equal(state.attempts, 2);
+});
+
+test('DOM route detection clears the old timeline while the next chat loads and recovers on arrival', async () => {
+    const { state, location, entry } = loadEntry({ pathname: '/c/first', hasTurns: true });
+    await settle();
+    state.hasTurns = false;
+    Object.assign(location, { pathname: '/c/slow', href: 'https://chatgpt.com/c/slow' });
+    state.readiness();
+    await settle();
+    assert.equal(entry.manager(), null);
+    assert.equal(state.destroyed, 1);
+
+    state.hasTurns = true;
+    state.readiness();
+    await settle();
+    assert.equal(state.attempts, 2);
+    assert(entry.manager());
+
+    Object.assign(location, { pathname: '/', href: 'https://chatgpt.com/' });
+    state.readiness();
+    await settle();
+    assert.equal(entry.manager(), null);
+    assert.equal(state.destroyed, 2);
+});
+
 test('disabled timeline still observes routes and waits for the platform to be enabled', async () => {
     const { state, events, entry } = loadEntry({ pathname: '/c/test', hasTurns: true, enabled: false });
     await settle();

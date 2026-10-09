@@ -276,6 +276,13 @@ async function bootstrapTimeline() {
     if (window.DOMObserverManager && !unsubscribePageObserver) {
         unsubscribePageObserver = window.DOMObserverManager.getInstance().subscribeBody('timeline-readiness', {
             callback: () => {
+                // 页面自身的 history 调用发生在 MAIN world，隔离环境的包装可能收不到。
+                // 先处理路由，再检查旧实例和初始化状态，避免沿用上一条聊天的时间轴。
+                if (location.href !== currentUrl) {
+                    void handleUrlChange()
+                        .catch(e => console.error('[Timeline] Failed to handle route from DOM observer:', e));
+                    return;
+                }
                 if (readinessCheckInFlight || timelineInitInFlight) return;
                 if (timelineManagerInstance) {
                     if (!timelineManagerInstance.conversationContainer?.isConnected) {
@@ -293,6 +300,7 @@ async function bootstrapTimeline() {
                 })().catch(e => console.error('[Timeline] Failed to init from DOM observer:', e))
                     .finally(() => { readinessCheckInFlight = false; });
             },
+            throttle: 150,
             debounce: 150
         });
     }
