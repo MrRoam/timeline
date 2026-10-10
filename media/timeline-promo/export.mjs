@@ -5,12 +5,14 @@ import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {Worker} from 'node:worker_threads';
 import {Resvg} from '@resvg/resvg-js';
-import {render,width,height,fps,duration,stillTimes} from './scene.mjs';
 import {font} from './fonts.mjs';
 import {ffmpeg,runFFmpeg,prepareAudio,verifyVideo} from './runtime.mjs';
-const dir=path.dirname(fileURLToPath(import.meta.url)),output=path.join(dir,'renders');
-const settings=JSON.parse(await readFile(path.join(dir,'settings.json'),'utf8'));
+const dir=path.dirname(fileURLToPath(import.meta.url));
 const arg=name=>{const index=process.argv.indexOf(name);return index<0?undefined:process.argv[index+1]};
+const sceneUrl=new URL(arg('--scene')||'./scene.mjs',import.meta.url);
+const {render,width,height,fps,duration,stillTimes}=await import(sceneUrl.href);
+const output=path.resolve(dir,arg('--output')||'renders');
+const settings=JSON.parse(await readFile(path.resolve(dir,arg('--settings')||'settings.json'),'utf8'));
 const limit=arg('--limit-seconds'),seconds=limit===undefined?duration:Number(limit);
 if(!Number.isFinite(seconds)||seconds<=0||seconds>duration)throw Error('limit-seconds须介于0与场景时长之间');
 if(![width,height,fps,duration].every(x=>Number.isFinite(x)&&x>0)||width%2||height%2)throw Error('画幅、帧率或时长无效');
@@ -28,7 +30,7 @@ const child=spawn(ffmpeg,['-hide_banner','-loglevel','warning','-y','-f','rawvid
 let stderr='';child.stderr.on('data',b=>stderr+=b);child.stdin.on('error',()=>{});
 const done=new Promise((resolve,reject)=>{child.on('error',reject);child.on('close',code=>code===0?resolve():reject(Error(stderr)))});
 done.catch(()=>{});
-const workers=Array.from({length:Math.max(1,Math.min(3,Math.floor(settings.workers)||2))},()=>new Worker(new URL('./worker.mjs',import.meta.url)));
+const workers=Array.from({length:Math.max(1,Math.min(3,Math.floor(settings.workers)||2))},()=>new Worker(new URL('./worker.mjs',import.meta.url),{workerData:{sceneUrl:sceneUrl.href}}));
 const task=(worker,index)=>new Promise((resolve,reject)=>{
   const onMessage=data=>{worker.off('error',onError);data.error?reject(Error(data.error)):resolve(Buffer.from(data.pixels.buffer,data.pixels.byteOffset,data.pixels.byteLength))};
   const onError=e=>{worker.off('message',onMessage);reject(e)};

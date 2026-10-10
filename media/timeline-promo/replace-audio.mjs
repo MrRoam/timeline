@@ -1,8 +1,8 @@
 import {mkdir,writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {duration,fps} from './scene.mjs';
 import {prepareAudio,runFFmpeg,verifyVideo} from './runtime.mjs';
 const arg=name=>{const i=process.argv.indexOf(name);return i<0?undefined:process.argv[i+1]};
+const {duration,fps}=await import(new URL(arg('--scene')||'./scene.mjs',import.meta.url).href);
 const style=arg('--style')||'b',input=arg('--video'),target=arg('--output');
 if(!input||!target)throw Error('参数：--style b --video 已有.mp4 --output 新.mp4');
 const output=path.resolve(target),source=path.resolve(input);

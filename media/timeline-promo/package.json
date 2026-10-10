@@ -7,7 +7,9 @@
     "stills": "node export.mjs --stills",
     "export": "node export.mjs",
     "audio": "node replace-audio.mjs",
-    "preview": "node serve.mjs"
+    "preview": "node serve.mjs",
+    "reference:stills": "node export.mjs --scene reference-scene.mjs --settings reference-settings.json --output renders/reference-cut --stills",
+    "reference:export": "node export.mjs --scene reference-scene.mjs --settings reference-settings.json --output renders/reference-cut"
   },
   "dependencies": {
     "@resvg/resvg-js": "2.6.2"

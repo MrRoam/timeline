@@ -1,6 +1,6 @@
-import { parentPort } from 'node:worker_threads';
+import { parentPort,workerData } from 'node:worker_threads';
 import { createRequire } from 'node:module';
-import { render,motionWindows } from './scene.mjs';
+const {render,motionWindows}=await import(workerData?.sceneUrl||new URL('./scene.mjs',import.meta.url).href);
 import { font } from './fonts.mjs';
 const require=createRequire(import.meta.url);
 const {Resvg}=require('@resvg/resvg-js');

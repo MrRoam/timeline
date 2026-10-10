@@ -1,0 +1,16 @@
+{
+  "tagline": "让长对话，有迹可循。",
+  "navigation": "每次提问，都有一个入口。",
+  "hover": "悬停看问题。点击回到原文。",
+  "located": "想找的那一问，就在这里。",
+  "chapter": "读到哪，回到哪",
+  "chapterNote": "追问之后，也能接着读。",
+  "reading": "回看前文时，想到一个新问题。",
+  "followup": "把这个判断方法整理成检查清单。",
+  "answer": ["可以。先按这三个步骤检查：", "确认问题 → 评估收益 → 核对成本。"],
+  "sent": "发送后，自动留下返回点。",
+  "returned": "一键回来，接着刚才那一段。",
+  "closing": "找得到。回得去。",
+  "endnote": "Timeline · ChatGPT 对话导航扩展",
+  "source": "github.com/MrRoam/chatgpt-gemini-timeline"
+}
