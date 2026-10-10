@@ -24,8 +24,10 @@ const pin=(x,y,color=C.gray,size=18)=>`<g transform="translate(${x} ${y}) scale(
 const railIcon=(x,y,color=C.ink,scale=1)=>`<g transform="translate(${x} ${y}) scale(${scale})">${[12,21,30,21,12].map((w,i)=>rect(30-w,i*7,w,2.5,1.2,color)).join('')}</g>`;
 const brandIcon=(x,y,size=22)=>`<g transform="translate(${x} ${y}) scale(${size/64})"><path d="M12 2h40a10 10 0 0 1 10 10v25a10 10 0 0 1-10 10H31L17 60V47h-5A10 10 0 0 1 2 37V12A10 10 0 0 1 12 2Z" fill="url(#brand)"/><path d="M35 9 21 28h11l-5 15 18-23H34Z" fill="#fff"/></g>`;
 const rgb=(a,b,p)=>'#'+a.map((v,i)=>Math.round(mix(v,b[i],p)).toString(16).padStart(2,'0')).join('');
-const browserBox={x:315,y:190,w:970,h:520},railX=1258,railY=359,step=13;
-const target=3*320,reading=target+54,pinY=railY+3.5*step;
+// 宣传片将实际14/28px刻度放大，保持同一条右侧锚线。
+const browserBox={x:315,y:190,w:970,h:520},railX=1192,railY=322,step=22;
+const target=3*320,reading=target+54,pinSlot=4,pinY=railY+pinSlot*step;
+const tick=(y,w,h,color)=>rect(railX-w,y-h/2,w,h,h/2,color);
 
 function scrollAt(t){
   if(t<T.restore){
@@ -50,8 +52,8 @@ function turn(index,t){
 
 function tooltip(s,y,a){
   const w=s.length*17+34;
-  return group(rect(railX-43-w,y-24,w,48,12,'#f8fafc','stroke="#e2e8f0" stroke-width="1"')+
-    txt(railX-26-w,y+6,s,17,'#334155'),a,`translate(${8*(1-a)} 0)`);
+  return group(rect(railX-60-w,y-24,w,48,12,'#f8fafc','stroke="#e2e8f0" stroke-width="1"')+
+    txt(railX-43-w,y+6,s,17,'#334155'),a,`translate(${8*(1-a)} 0)`);
 }
 
 function rail(t){
@@ -64,17 +66,17 @@ function rail(t){
   let body='';
   for(let i=0;i<count;i++){
     const near=Math.abs(i-3);
-    const hoverW=near===0?28:near===1?20:14;
-    const w=mix(14,hoverW,hovered)*revealed;
-    const y=railY+i*step+(i>=4?step*pinGrow:0);
+    const hoverW=near===0?46:near===1?34:24;
+    const w=mix(24,hoverW,hovered)*revealed;
+    const y=railY+i*step+(i>=pinSlot?step*pinGrow:0);
     const emphasis=(i===active&&!activePin)||i===3&&hovered>.5;
-    body+=rect(railX-w,y-1,w,emphasis?3:2,1.5,emphasis?C.ink:C.line);
+    body+=tick(y,w,emphasis?4:3,emphasis?C.ink:'#a8afa3');
   }
   if(pinGrow>0){
-    const w=mix(activePin?28:10,28,returnHover)*pinGrow;
-    body+=rect(railX-w,pinY-1,w,3,1.5,C.yellow);
+    const w=mix(activePin?46:24,46,returnHover)*pinGrow;
+    body+=tick(pinY,w,4,C.yellow);
   }
-  body+=group(pin(railX-13,675,pinGrow>.5?'#c78f13':C.gray),revealed);
+  body+=group(pin(railX-24,671,pinGrow>.5?'#c78f13':C.gray,24),revealed);
   body+=tooltip(dialogueCopy.turns[3].q,railY+3*step,hovered);
   body+=tooltip('回到固定位置',pinY,returnHover);
   return body;
@@ -122,12 +124,15 @@ function ui(t){
   body+=rail(t);
   let x,y,a;
   if(t<T.collapse){
-    const p=span(t,4.6,5.15);x=mix(1320,1250,p);y=mix(630,railY+3*step,p);
+    const p=span(t,4.6,5.15),leave=span(t,T.jump+.2,T.jump+.48);
+    x=mix(mix(1242,railX-6,p),railX+24,leave);y=mix(mix(630,railY+3*step,p),railY+3*step+30,leave);
     a=show(t,4.65,4.9,8.4,8.8);
   }else{
     const sendMove=span(t,15.2,15.55),returnMove=span(t,18.05,18.65);
-    x=mix(mix(932,1114,sendMove),1250,returnMove);
+    const leave=span(t,T.returnClick+.28,T.returnClick+.58);
+    x=mix(mix(mix(932,1114,sendMove),railX-6,returnMove),railX+24,leave);
     y=mix(mix(666,658,sendMove),pinY,returnMove);
+    y=mix(y,pinY+30,leave);
     a=show(t,15.18,15.35,20.05,20.45);
   }
   body+=pointer(x,y,t,[T.jump,T.send,T.returnClick],a);

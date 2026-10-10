@@ -21,7 +21,7 @@ function loudness(text){
   return m;
 }
 export async function prepareAudio(dir,style,duration){
-  if(!['b','reference'].includes(style))throw Error('请选择已与画面对齐的音效：b 或 reference');
+  if(!['b','reference','reference-a','reference-b','reference-c'].includes(style))throw Error('请选择已与画面对齐的音效模块');
   const audio=await import(`./audio/${style}.mjs`);
   const raw=path.join(dir,'raw.wav'),sound=path.join(dir,'sound.wav');
   const wav=audio.createAudio({duration,sampleRate:48000});

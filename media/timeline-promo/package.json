@@ -9,7 +9,9 @@
     "audio": "node replace-audio.mjs",
     "preview": "node serve.mjs",
     "reference:stills": "node export.mjs --scene reference-scene.mjs --settings reference-settings.json --output renders/reference-cut --stills",
-    "reference:export": "node export.mjs --scene reference-scene.mjs --settings reference-settings.json --output renders/reference-cut"
+    "reference:export": "node export.mjs --scene reference-scene.mjs --settings reference-settings.json --output renders/reference-cut",
+    "reference:v2": "node export.mjs --scene reference-scene.mjs --settings reference-v2-settings.json --output renders/reference-v2",
+    "reference:audio-options": "node reference-audio-options.mjs"
   },
   "dependencies": {
     "@resvg/resvg-js": "2.6.2"
