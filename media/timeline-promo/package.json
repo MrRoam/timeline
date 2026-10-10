@@ -1,0 +1,15 @@
+{
+  "name": "continuous-ui-video-project",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "stills": "node export.mjs --stills",
+    "export": "node export.mjs",
+    "audio": "node replace-audio.mjs",
+    "preview": "node serve.mjs"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "2.6.2"
+  }
+}

@@ -1,0 +1,14 @@
+import {mkdir,writeFile} from 'node:fs/promises';
+import path from 'node:path';
+import {duration,fps} from './scene.mjs';
+import {prepareAudio,runFFmpeg,verifyVideo} from './runtime.mjs';
+const arg=name=>{const i=process.argv.indexOf(name);return i<0?undefined:process.argv[i+1]};
+const style=arg('--style')||'b',input=arg('--video'),target=arg('--output');
+if(!input||!target)throw Error('参数：--style b --video 已有.mp4 --output 新.mp4');
+const output=path.resolve(target),source=path.resolve(input);
+if(source.toLowerCase()===output.toLowerCase())throw Error('请另存新文件，保留原视频。');
+const work=path.join(path.dirname(output),`.audio-${style}`);await mkdir(work,{recursive:true});
+const sound=await prepareAudio(work,style,duration);
+await runFFmpeg(['-hide_banner','-loglevel','error','-y','-i',source,'-i',sound,'-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','aac','-b:a','192k','-t',String(duration),'-movflags','+faststart',output]);
+const report={...await verifyVideo(output,{duration,fps}),style,videoCopiedWithoutReencoding:true};
+await writeFile(output+'.json',JSON.stringify(report,null,2));console.log(`完成：${output}`);
