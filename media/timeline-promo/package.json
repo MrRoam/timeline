@@ -11,7 +11,8 @@
     "reference:stills": "node export.mjs --scene reference-scene.mjs --settings reference-settings.json --output renders/reference-cut --stills",
     "reference:export": "node export.mjs --scene reference-scene.mjs --settings reference-settings.json --output renders/reference-cut",
     "reference:v2": "node export.mjs --scene reference-scene.mjs --settings reference-v2-settings.json --output renders/reference-v2",
-    "reference:audio-options": "node reference-audio-options.mjs"
+    "reference:audio-options": "node reference-audio-options.mjs",
+    "reference:clean-audio": "node reference-clean-audio.mjs"
   },
   "dependencies": {
     "@resvg/resvg-js": "2.6.2"
