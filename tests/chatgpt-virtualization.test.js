@@ -490,6 +490,59 @@ test('ChatGPT capture preserves the latest successful snapshot when responses ar
     assert.deepEqual(texts, { u1: '新分支' });
 });
 
+test('ChatGPT recognizes native transcript roles and IDs without sr-only headings, including anonymous routes', () => {
+    const document = new Document();
+    const transcript = new Element('ol', { attrs: { 'data-conversation-transcript': '' } });
+    document.body.append(new Element('main').append(transcript));
+    const user = new Element('li', { attrs: { 'data-message-role': 'user', id: 'native-user-1' } });
+    user.append(new Element('h4', { text: '你说：', attrs: { 'data-message-attribution': '' } }),
+        new Element('div', { text: '实页中的问题' }));
+    const answer = new Element('li', { attrs: { 'data-message-role': 'assistant', id: 'native-answer-1' } });
+    transcript.append(user, answer);
+    const adapter = loadChatGPTAdapter(document);
+    adapter.prepareTimelineNodes({ force: true });
+    assert.deepEqual(document.querySelectorAll(adapter.getUserMessageSelector()), [user]);
+    assert.deepEqual(document.querySelectorAll(adapter.getAssistantMessageSelector()), [answer]);
+    assert.equal(adapter.generateTurnId(user, 0), 'chatgpt-native-user-1');
+    assert.equal(adapter.extractText(user), '实页中的问题');
+    assert.equal(adapter.findTimelineTurn(adapter.getTimelineTurnKey(answer)), answer);
+    assert.equal(adapter.isConversationRoute('/uc/anonymous-1'), true);
+    assert.equal(adapter.extractConversationId('/uc/anonymous-1'), 'anonymous-1');
+});
+
+test('ChatGPT heading navigation keys survive replacement and identify answers relative to their question', () => {
+    const { document, turns, add } = headingFixture();
+    const first = add('You said:', 'First question');
+    const answer = add('ChatGPT said:', 'First answer');
+    add('You said:', 'Second question');
+    const adapter = loadChatGPTAdapter(document);
+    adapter.prepareTimelineNodes({ force: true });
+    const userKey = adapter.getTimelineTurnKey(first.element);
+    const answerKey = adapter.getTimelineTurnKey(answer.element);
+    const replacement = first.element.cloneNode(true);
+    turns.children[0] = replacement;
+    replacement.parentElement = turns;
+    first.element.parentElement = null;
+    assert.equal(adapter.findTimelineTurn(userKey), replacement);
+    assert.equal(adapter.findTimelineTurn(answerKey), answer.element);
+    assert.equal(adapter.findTimelineTurn({ nodeId: 'missing' }), null);
+});
+
+test('ChatGPT virtualized navigation keys retain the stable shell ID', () => {
+    const document = new Document();
+    const shell = new Element('section', { attrs: {
+        'data-turn-id-container': 'u1', 'data-is-intersecting': 'false'
+    } });
+    shell.append(new Element('article', { attrs: { 'data-turn': 'user' } }));
+    document.body.append(shell);
+    const adapter = loadChatGPTAdapter(document);
+    adapter.prepareTimelineNodes({ force: true });
+    const key = adapter.getTimelineTurnKey(shell);
+    shell.textContent = '';
+    assert.equal(adapter.findTimelineTurn(key), shell);
+    assert.equal(adapter.getTimelineTurns().length, 1);
+});
+
 test('ChatGPT zero-box new UI messages use body geometry for positions, highlight and navigation', () => {
     const { document, add } = headingFixture();
     const adapter = loadChatGPTAdapter(document);

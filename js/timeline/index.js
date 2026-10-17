@@ -137,11 +137,15 @@ function destroyTimelineInstance() {
 }
 
 async function initializeTimeline(version = initVersion) {
+    if (version !== initVersion) return false;
     if (timelineInitInFlight) {
         if (timelineInitInFlightVersion === version) {
             return timelineInitInFlight;
         }
     }
+    // Readiness and the delayed retry can both reach this entry point. A retry
+    // must not destroy the working instance created by the earlier caller.
+    if (timelineManagerInstance && !timelineManagerInstance._destroyed) return true;
 
     timelineInitInFlightVersion = version;
     timelineInitInFlight = (async () => {

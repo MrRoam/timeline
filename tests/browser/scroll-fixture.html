@@ -1,0 +1,169 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Timeline browser scroll regressions</title>
+<!-- STYLES -->
+<style>
+  body { margin: 0; color: #222; background: #fff; font: 16px/1.6 sans-serif; }
+  main { height: 100vh; overflow-y: auto; overflow-anchor: none; }
+  #thread { display: flex; flex-direction: column; gap: 24px; max-width: 700px; margin: auto; padding: 40px 0; }
+  article, section { flex: none; }
+  .whitespace-pre-wrap { box-sizing: border-box; padding: 24px; }
+  .host-user { height: 100px; background: #f5f5f5; }
+  .host-assistant { height: 420px; background: #fff; }
+  body.heading article { display: contents; }
+  body.document main { height: auto; overflow-y: visible; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+</style>
+<main><div id="thread"></div></main>
+<script>
+  const data = {};
+  window.chrome = {
+    runtime: { getURL: value => '/' + value, onMessage: { addListener() {}, removeListener() {} } },
+    i18n: { getMessage: () => '' },
+    storage: {
+      local: { async get(key, callback) { const value = typeof key === 'string' ? { [key]: data[key] } : { ...data }; callback?.(value); return value; }, async set(value, callback) { Object.assign(data, value); callback?.(); }, async remove(key, callback) { delete data[key]; callback?.(); } },
+      sync: { async get(key, callback) { callback?.({}); return {}; }, async remove() {} },
+      onChanged: { addListener() {}, removeListener() {} }
+    }
+  };
+  const thread = document.getElementById('thread');
+  const mode = new URLSearchParams(location.search).get('mode') || 'legacy';
+  document.body.className = mode;
+  for (let index = 0; index < 12; index++) {
+    for (const role of ['user', 'assistant']) {
+      const turn = document.createElement('article');
+      turn.dataset.turn = role;
+      turn.dataset.turnId = `${role}-${index}`;
+      turn.innerHTML = `<div class="whitespace-pre-wrap host-${role}">${role === 'user' ? 'Question' : 'Answer'} ${index + 1}</div>`;
+      let hostTurn = turn;
+      if (mode === 'native') {
+        turn.removeAttribute('data-turn');
+        turn.removeAttribute('data-turn-id');
+        turn.setAttribute('data-message-role', role);
+        turn.id = `${role}-${index}`;
+        const heading = document.createElement('h4');
+        heading.setAttribute('data-message-attribution', '');
+        heading.textContent = role === 'user' ? '你说：' : 'ChatGPT 说：';
+        heading.style.cssText = 'position:absolute;width:1px;height:1px;clip-path:inset(50%)';
+        turn.prepend(heading);
+      } else if (mode === 'heading') {
+        turn.removeAttribute('data-turn');
+        turn.removeAttribute('data-turn-id');
+        const heading = document.createElement('h4');
+        heading.className = 'sr-only';
+        heading.textContent = role === 'user' ? 'You said:' : 'ChatGPT said:';
+        turn.prepend(heading);
+      } else if (mode === 'virtual') {
+        hostTurn = document.createElement('section');
+        hostTurn.setAttribute('data-turn-id-container', `${role}-${index}`);
+        hostTurn.setAttribute('data-is-intersecting', 'false');
+        hostTurn.appendChild(turn);
+      }
+      hostTurn.dataset.hostTurnId = `${role}-${index}`;
+      thread.appendChild(hostTurn);
+    }
+  }
+  const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const turn = id => document.querySelector(`[data-host-turn-id="${id}"]`);
+  const box = element => element.querySelector('.whitespace-pre-wrap');
+  const topOf = element => timelineManagerInstance._getMessageRect(element).top - timelineManagerInstance._getScrollViewportTop();
+  async function runScrollRegressions() {
+    const manager = timelineManagerInstance;
+    const main = manager.scrollContainer;
+    const results = [];
+    const check = (name, pass, detail) => results.push({ name, pass, detail });
+    await pause(700);
+    check('timeline preserves the host virtual-list children', thread.children.length === 24,
+      { children: thread.children.length, foreignChildren: thread.querySelectorAll('.ait-scroll-padding').length });
+
+    // A virtualizer replaces a target subtree while scrolling toward it.
+    main.scrollTop = 0;
+    let target = turn('user-8');
+    manager.smoothScrollTo(target, 180);
+    await pause(50);
+    const replacement = target.cloneNode(true);
+    target.replaceWith(replacement);
+    target = replacement;
+    await pause(900);
+    check('navigation survives replacement of the target turn', Math.abs(topOf(target) - 20) <= 3,
+      { targetTop: topOf(target), scrollTop: main.scrollTop });
+
+    // Virtualized history materializes after the scroll animation has finished.
+    main.scrollTop = 0;
+    manager.smoothScrollTo(target, 120);
+    await pause(220);
+    const previousAnswer = turn('assistant-2');
+    box(previousAnswer).style.height = '720px';
+    await pause(900);
+    check('navigation settles after delayed history layout', Math.abs(topOf(target) - 20) <= 3,
+      { targetTop: topOf(target) });
+
+    // A pin refers to the answer being read, even when earlier history changes height.
+    manager.setScrollTop(1600);
+    manager.setTemporaryPinAtScrollTop(main.scrollTop);
+    const readingAnswer = turn('assistant-2');
+    const readingTop = topOf(readingAnswer);
+    box(turn('assistant-0')).style.height = '620px';
+    main.scrollTop = 4000;
+    manager.renderPinMarkers();
+    document.querySelector('.timeline-pin-marker-current').click();
+    await pause(900);
+    check('pin returns to the same answer after history expands', Math.abs(topOf(readingAnswer) - readingTop) <= 3,
+      { before: readingTop, after: topOf(readingAnswer) });
+
+    // Append a new question and stream its reply through actual MutationObservers.
+    manager.cancelScrollNavigation();
+    const readingBeforeStream = topOf(readingAnswer);
+    for (const role of ['user', 'assistant']) {
+      const next = turn(`${role}-11`).cloneNode(true);
+      next.dataset.hostTurnId = `${role}-12`;
+      if (mode === 'virtual') next.setAttribute('data-turn-id-container', `${role}-12`);
+      else if (mode === 'native') next.id = `${role}-12`;
+      else if (mode !== 'heading') next.setAttribute('data-turn-id', `${role}-12`);
+      box(next).textContent = `${role} 13`;
+      thread.appendChild(next);
+    }
+    for (let token = 0; token < 18; token++) {
+      box(turn('assistant-12')).appendChild(document.createTextNode(` token ${token}`));
+      await pause(40);
+    }
+    await pause(550);
+    check('new output refreshes markers and preserves history and reading position',
+      manager.markers.length === 13 && thread.children.length === 26
+        && box(readingAnswer).textContent.includes('Answer') && Math.abs(topOf(readingAnswer) - readingBeforeStream) <= 3,
+      { markers: manager.markers.length, children: thread.children.length, drift: topOf(readingAnswer) - readingBeforeStream });
+
+    manager.smoothScrollTo(turn('user-10'), 300);
+    await pause(60);
+    manager.smoothScrollTo(turn('user-3'), 100);
+    await pause(800);
+    check('latest navigation wins over an earlier animation', Math.abs(topOf(turn('user-3')) - 20) <= 3,
+      { targetTop: topOf(turn('user-3')) });
+
+    main.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 200 }));
+    main.scrollTop = 1000;
+    await pause(150);
+    check('wheel input cancels navigation corrections', main.scrollTop === 1000 && manager._scrollNavigation === null,
+      { scrollTop: main.scrollTop });
+
+    box(turn('assistant-12')).style.height = '40px';
+    manager.smoothScrollTo(turn('user-12'), 0);
+    await pause(200);
+    manager._recalcMarkerPositions();
+    manager.computeActiveByScroll();
+    check('short final answers use the physical bottom and activate the last question',
+      Math.abs(main.scrollTop - (main.scrollHeight - main.clientHeight)) <= 1
+        && manager.activeTurnId === manager.markers[manager.markers.length - 1].id,
+      { scrollTop: main.scrollTop, maxScrollTop: main.scrollHeight - main.clientHeight, active: manager.activeTurnId });
+
+    manager.smoothScrollTo(turn('user-8'), 150);
+    await pause(60);
+    const beforeDestroy = main.scrollTop;
+    manager.destroy();
+    await pause(250);
+    check('teardown cancels pending navigation frames', main.scrollTop === beforeDestroy && manager._scrollNavigation === null,
+      { before: beforeDestroy, after: main.scrollTop });
+    return results;
+  }
+</script>
+<!-- SCRIPTS -->

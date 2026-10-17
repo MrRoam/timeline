@@ -86,6 +86,8 @@ class TimelineManager {
         this.timelineActiveColorByPlatform = {};
         // Timers and RAF IDs
         this.scrollRafId = null;
+        this._scrollNavigation = null;
+        this._scrollNavigationVersion = 0;
         this.activeChangeTimer = null;
         // ✅ 移除：tooltipHideTimer 由 GlobalTooltipManager 管理
         this.showRafId = null;
@@ -93,12 +95,6 @@ class TimelineManager {
         this.resizeIdleRICId = null;
         this.zeroTurnsTimer = null;
         
-        // Padding 管理：AI 生成中不更新，生成结束后更新
-        this._pendingPaddingUpdate = null;
-        this.debouncedUpdateScrollPadding = this.debounce((lastOffsetTop, cleanMaxScrollTop) => {
-            this._updateScrollPadding(lastOffsetTop, cleanMaxScrollTop);
-        }, 500);
-
         // Active state management
         this.lastActiveChangeTime = 0;
         this.pendingActiveId = null;
@@ -215,6 +211,58 @@ class TimelineManager {
         return this.adapter.getTimelineMessageRect?.(element)?.height ?? (element.offsetHeight || 0);
     }
 
+    _getScrollViewportTop() {
+        const container = this.scrollContainer;
+        if (container === window || container === document.scrollingElement
+            || container === document.documentElement || container === document.body) return 0;
+        return container.getBoundingClientRect().top + (container.clientTop || 0);
+    }
+
+    _getMessageContentTop(element) {
+        return this._getMessageRect(element).top - this._getScrollViewportTop() + this._getScrollTop();
+    }
+
+    captureScrollAnchor(scrollTop = this._getScrollTop()) {
+        if (!this.scrollContainer) return null;
+        const turns = this.adapter.getTimelineTurns?.() || [];
+        const readingLine = scrollTop + (this.adapter.getScrollOffset?.() || 0);
+        // Turns follow document order. Avoid measuring every historical turn on
+        // each scroll frame in a long conversation.
+        let low = 0;
+        let high = turns.length - 1;
+        let index = -1;
+        while (low <= high) {
+            const middle = (low + high) >>> 1;
+            if (this._getMessageContentTop(turns[middle]) <= readingLine) {
+                index = middle;
+                low = middle + 1;
+            } else high = middle - 1;
+        }
+        const element = turns[index];
+        const key = element && this.adapter.getTimelineTurnKey?.(element);
+        return key ? { key, offset: scrollTop - this._getMessageContentTop(element) } : null;
+    }
+
+    resolveScrollAnchor(anchor) {
+        if (!anchor?.key || !Number.isFinite(anchor.offset)) return null;
+        const element = this.adapter.findTimelineTurn?.(anchor.key);
+        return element ? { element, scrollTop: this._getMessageContentTop(element) + anchor.offset } : null;
+    }
+
+    restoreScrollAnchor(anchor, fallbackScrollTop) {
+        const resolved = this.resolveScrollAnchor(anchor);
+        this.setScrollTop(resolved?.scrollTop ?? fallbackScrollTop);
+        if (resolved) {
+            let element = resolved.element;
+            this._startScrollNavigation(() => {
+                if (!element?.isConnected) element = this.adapter.findTimelineTurn?.(anchor.key);
+                if (!element) return null;
+                return this._getMessageContentTop(element) + anchor.offset;
+            }, 0);
+        }
+        return resolved?.scrollTop ?? fallbackScrollTop;
+    }
+
     _collectUserTurnElements({ scope = document, forcePrepare = false, reason = '' } = {}) {
         this.adapter.prepareTimelineNodes?.({ force: forcePrepare, reason });
         const selector = this.adapter.getUserMessageSelector();
@@ -235,6 +283,7 @@ class TimelineManager {
 
         const elementsFound = await this.findCriticalElements();
         if (this._destroyed || !elementsFound) return false;
+        this.cleanupScrollPadding();
         
         // ✅ 同步深色模式状态到 html 元素
         this.syncDarkModeClass();
@@ -905,19 +954,7 @@ class TimelineManager {
          * - + scrollTop = 加上已滚动的距离
          * - 结果 = 元素相对于容器内容区域顶部的绝对距离
          */
-        const getOffsetTop = (element, container) => {
-            const elemRect = this._getMessageRect(element);
-            const contRect = container.getBoundingClientRect();
-            let contScrollTop = container.scrollTop || 0;
-            
-            // ✅ 反向滚动时，scrollTop 是负数，取绝对值
-            const isReverseScroll = typeof this.adapter.isReverseScroll === 'function' && this.adapter.isReverseScroll();
-            if (isReverseScroll) {
-                contScrollTop = Math.abs(contScrollTop);
-            }
-            
-            return elemRect.top - contRect.top + contScrollTop;
-        };
+        const getOffsetTop = element => this._getMessageContentTop(element);
         
         /**
          * ✅ 新设计：基于滚动进度的 n 值计算
@@ -959,17 +996,6 @@ class TimelineManager {
         this.firstUserTurnOffset = firstOffsetTop;
         this.contentSpanPx = contentSpan;
         
-        /**
-         * ✅ 底部 padding 管理
-         * 
-         * 问题：当最后几个节点距离很近时，点击某个节点后可能激活错误的节点
-         * 原因：原来的 activateAt 和 offsetTop 的映射关系不是 1:1
-         * 
-         * 解决方案：添加底部 padding，确保 maxScrollTop >= lastOffsetTop
-         * 这样可以直接用 offsetTop 判断激活，避免压缩问题
-         */
-        this._updateScrollPadding(lastOffsetTop, cleanMaxScrollTop);
-
         // Build markers with normalized position along conversation
         this.markerMap.clear();
         
@@ -1150,6 +1176,7 @@ class TimelineManager {
                 return !!target?.closest?.(this.adapter.getUserMessageSelector());
             }
             if (mutation.type === 'attributes') {
+                if (mutation.attributeName === 'id') return !!target?.hasAttribute?.('data-message-role');
                 if (mutation.attributeName === 'class') {
                     return target?.tagName === 'H4' && /(?:^|\s)sr-only(?:\s|$)/.test(mutation.oldValue || '');
                 }
@@ -1415,6 +1442,7 @@ class TimelineManager {
     }
 
     rebindConversationContainer(newConv) {
+        const previousScroll = this.scrollContainer;
         // Detach old listeners
         if (this.scrollContainer && this.onScroll) {
             try { this.scrollContainer.removeEventListener('scroll', this.onScroll); } catch {}
@@ -1429,9 +1457,6 @@ class TimelineManager {
         this._renderedNodeCount = 0;
         this._renderedNodeIds = new Set();
         
-        // ✅ Padding 状态由 adapter.isAIGenerating() 实时控制
-        this._currentPadding = 0;
-
         // Find (or re-find) scroll container
         let parent = newConv;
         let newScroll = null;
@@ -1444,6 +1469,7 @@ class TimelineManager {
         }
         if (!newScroll) newScroll = document.scrollingElement || document.documentElement || document.body;
         this.scrollContainer = newScroll;
+        if (previousScroll !== newScroll) this.cancelScrollNavigation();
         // Reattach scroll listener
         this.onScroll = () => {
             this.scheduleScrollSync();
@@ -1474,7 +1500,6 @@ class TimelineManager {
         try {
             root.querySelectorAll?.('.ait-scroll-padding').forEach(el => el.remove());
         } catch {}
-        this._currentPadding = 0;
     }
 
     updateIntersectionObserverTargets() {
@@ -2248,6 +2273,7 @@ class TimelineManager {
                 url: location.href,
                 urlWithoutProtocol,
                 scrollTop,
+                anchor: this.captureScrollAnchor(scrollTop),
                 timestamp: Date.now(),
             },
         };
@@ -2307,15 +2333,21 @@ class TimelineManager {
         if (typeof StorageAdapter === 'undefined' || typeof StorageAdapter.get !== 'function') return false;
 
         this._savedScrollPositionRestored = true;
+        const navigationVersion = this._scrollNavigationVersion;
+        const scrollIntentAt = this._lastUserScrollIntentAt;
+        const storageKey = this.getScrollPositionStorageKey();
 
         try {
-            const saved = await StorageAdapter.get(this.getScrollPositionStorageKey());
+            const saved = await StorageAdapter.get(storageKey);
+            if (this._destroyed || navigationVersion !== this._scrollNavigationVersion
+                || scrollIntentAt !== this._lastUserScrollIntentAt
+                || storageKey !== this.getScrollPositionStorageKey()) return false;
             if (!saved || typeof saved !== 'object') return false;
 
             const scrollTop = Number(saved.scrollTop);
             if (!Number.isFinite(scrollTop)) return false;
 
-            this.setScrollTop(scrollTop);
+            this.restoreScrollAnchor(saved.anchor, scrollTop);
             this.scheduleScrollSync?.();
             return true;
         } catch {
@@ -2325,6 +2357,7 @@ class TimelineManager {
 
     setScrollTop(scrollTop) {
         if (!this.scrollContainer || !Number.isFinite(scrollTop)) return false;
+        this.cancelScrollNavigation();
         this._clearAutoBottomJumpTracking();
 
         if (this.scrollContainer === window) {
@@ -2398,8 +2431,7 @@ class TimelineManager {
                     || event.target?.closest?.('input, textarea, [contenteditable="true"]')) return;
             } else if (!this.scrollContainer?.contains?.(event.target)
                 && !this.ui.timelineBar?.contains?.(event.target)) return;
-            if (event.type === 'pointerdown' && event.target !== this.scrollContainer
-                && !event.target?.closest?.('button, a, .ait-timeline-dot')) return;
+            this.cancelScrollNavigation();
             this._clearAutoBottomJumpTracking();
         };
         document.addEventListener('pointerdown', this.onPotentialSendPointerDown, true);
@@ -2429,6 +2461,7 @@ class TimelineManager {
         const { maxScrollTop, clientHeight } = this._getCleanScrollMetrics();
         return {
             scrollTop,
+            anchor: this.captureScrollAnchor(scrollTop),
             activeIndex,
             totalCount,
             isLast: activeIndex === totalCount - 1,
@@ -2461,6 +2494,7 @@ class TimelineManager {
 
     _capturePotentialMessageSendSnapshot({ preserveRecent = false } = {}) {
         if (this.adapter?.isReverseScroll?.()) return false;
+        this.cancelScrollNavigation();
 
         // pointerdown 后，聚焦或宿主处理可能已滚动；click/submit 保留同一次发送的最早位置。
         const previous = this._pendingMessageSendSnapshot;
@@ -2539,6 +2573,7 @@ class TimelineManager {
 
         this.pendingAutoBottomJump = {
             scrollTop: Math.max(0, capturedScrollTop),
+            anchor: (sendSnapshotUsable ? sendSnapshot : snapshotUsable ? snapshot : preBottomSnapshot).anchor,
             previousCount,
             currentCount,
             createdAt: now,
@@ -2563,6 +2598,7 @@ class TimelineManager {
             // 宿主可能先跳底再挂载提问；返回点不依赖 marker 数量变化的先后顺序。
             this.pendingAutoBottomJump = {
                 scrollTop: send.scrollTop,
+                anchor: send.anchor,
                 previousCount: send.totalCount,
                 currentCount: this.markers.length,
                 createdAt: send.timestamp,
@@ -2602,13 +2638,13 @@ class TimelineManager {
         this._lastPreBottomScrollSnapshot = null;
 
         if (this.temporaryPin) {
-            return this._showAutoBottomJumpFlashCandidate(pending.scrollTop);
+            return this._showAutoBottomJumpFlashCandidate(pending.scrollTop, this.AUTO_BOTTOM_JUMP_CONFIRM_MS, pending.anchor);
         }
 
-        return this.setTemporaryPinAtScrollTop(pending.scrollTop);
+        return this.setTemporaryPinAtScrollTop(pending.scrollTop, null, pending.anchor);
     }
 
-    _showAutoBottomJumpFlashCandidate(scrollTop, durationMs = this.AUTO_BOTTOM_JUMP_CONFIRM_MS) {
+    _showAutoBottomJumpFlashCandidate(scrollTop, durationMs = this.AUTO_BOTTOM_JUMP_CONFIRM_MS, anchor = null) {
         if (!this.ui?.trackContent || !Number.isFinite(scrollTop)) return false;
 
         this._clearAutoBottomJumpFlashCandidate();
@@ -2622,7 +2658,7 @@ class TimelineManager {
         pinMarker.addEventListener('click', (e) => {
             e.stopPropagation();
             this._clearAutoBottomJumpFlashCandidate();
-            this.setTemporaryPinAtScrollTop(scrollTop);
+            this.setTemporaryPinAtScrollTop(scrollTop, null, anchor);
         });
 
         this.ui.trackContent.appendChild(pinMarker);
@@ -2791,7 +2827,7 @@ class TimelineManager {
         return pad + slotIndex * gap;
     }
 
-    setTemporaryPinAtScrollTop(scrollTop, sourceMarkerId = null) {
+    setTemporaryPinAtScrollTop(scrollTop, sourceMarkerId = null, anchor = this.captureScrollAnchor(scrollTop)) {
         if (!Number.isFinite(scrollTop)) return false;
 
         this._clearAutoBottomJumpFlashCandidate();
@@ -2806,6 +2842,7 @@ class TimelineManager {
 
         this.temporaryPin = {
             scrollTop,
+            anchor,
             sourceMarkerId,
             visualN: this.getTemporaryPinVisualN(scrollTop),
         };
@@ -2886,42 +2923,54 @@ class TimelineManager {
     smoothScrollTo(targetElement, duration = 600) {
         if (!targetElement || !this.scrollContainer) return;
         this._clearAutoBottomJumpTracking();
-
-        this._recalcMarkerPositions();
-        
+        const key = this.adapter.getTimelineTurnKey?.(targetElement);
+        const markerId = this.markers?.find(marker => marker.element === targetElement)?.id;
         const scrollOffset = this.adapter?.getScrollOffset?.() ?? 30;
-        const startPosition = this.scrollContainer.scrollTop;
-        
-        // 计算初始目标位置
-        const getTargetPosition = () => {
-            const containerRect = this.scrollContainer.getBoundingClientRect();
-            const targetRect = this._getMessageRect(targetElement);
-            return targetRect.top - containerRect.top + this.scrollContainer.scrollTop - scrollOffset;
-        };
-        
-        let startTime = null;
-
-        const animation = (currentTime) => {
-            if (!targetElement.isConnected) return;
-            if (startTime === null) startTime = currentTime;
-            const timeElapsed = currentTime - startTime;
-            const progress = Math.min(timeElapsed / duration, 1);
-            const easedProgress = this.easeInOutQuad(progress, 0, 1, 1);
-            
-            // 每帧重新计算目标位置，应对 DOM 动态插入
-            const currentTarget = getTargetPosition();
-            const currentPosition = startPosition + (currentTarget - startPosition) * easedProgress;
-            
-            this.scrollContainer.scrollTop = currentPosition;
-            
-            if (progress < 1) {
-                requestAnimationFrame(animation);
-            } else {
-                // 动画结束后做最终修正
-                this.scrollContainer.scrollTop = getTargetPosition();
+        this._startScrollNavigation(() => {
+            if (!targetElement?.isConnected) {
+                targetElement = this.adapter.findTimelineTurn?.(key)
+                    || this.markerMap?.get(markerId)?.element;
             }
+            if (!targetElement?.isConnected) return null;
+            return this._getMessageContentTop(targetElement) - scrollOffset;
+        }, duration);
+    }
+
+    cancelScrollNavigation() {
+        if (this._scrollNavigation?.rafId != null) cancelAnimationFrame(this._scrollNavigation.rafId);
+        this._scrollNavigation = null;
+        this._scrollNavigationVersion = (this._scrollNavigationVersion || 0) + 1;
+    }
+
+    _startScrollNavigation(getTargetPosition, duration) {
+        this.cancelScrollNavigation();
+        if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) duration = 0;
+        const container = this.scrollContainer;
+        const navigation = { rafId: null, startTime: null };
+        this._scrollNavigation = navigation;
+        const startPosition = this._getScrollTop();
+        const animation = (currentTime) => {
+            if (this._destroyed || this._scrollNavigation !== navigation || this.scrollContainer !== container) return;
+            if (navigation.startTime === null) navigation.startTime = currentTime;
+            const elapsed = currentTime - navigation.startTime;
+            const requestedTarget = getTargetPosition();
+            if (Number.isFinite(requestedTarget)) {
+                const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+                const target = Number.isFinite(maxScrollTop)
+                    ? Math.max(0, Math.min(maxScrollTop, requestedTarget)) : Math.max(0, requestedTarget);
+                const progress = duration > 0 ? Math.min(elapsed / duration, 1) : 1;
+                const position = startPosition + (target - startPosition) * this.easeInOutQuad(progress, 0, 1, 1);
+                if (Math.abs(this._getScrollTop() - position) > 1) {
+                    if (typeof container.scrollTo === 'function') container.scrollTo({ top: position, behavior: 'instant' });
+                    else container.scrollTop = position;
+                }
+            }
+            // Virtualized history can materialize after the animation. Keep a bounded
+            // correction window; wheel/touch/keyboard input cancels it immediately.
+            if (elapsed < duration + 1600) navigation.rafId = requestAnimationFrame(animation);
+            else this._scrollNavigation = null;
         };
-        requestAnimationFrame(animation);
+        navigation.rafId = requestAnimationFrame(animation);
     }
     
     easeInOutQuad(t, b, c, d) {
@@ -3625,98 +3674,6 @@ class TimelineManager {
     }
 
     /**
-     * 管理底部空白元素，确保最后节点可滚动激活
-     * @param {number} lastOffsetTop - 最后节点的 offsetTop
-     * @param {number} cleanMaxScrollTop - 不含空白元素的最大滚动距离
-     */
-    _updateScrollPadding(lastOffsetTop, cleanMaxScrollTop) {
-        if (!this.conversationContainer) return;
-        
-        // ✅ 如果节点数 <= 1，不需要 padding，移除已存在的元素并返回
-        if (this.markers.length <= 1) {
-            const existingPadding = this.conversationContainer.querySelector('.ait-scroll-padding');
-            if (existingPadding) {
-                existingPadding.remove();
-                this._currentPadding = 0;
-            }
-            return;
-        }
-        
-        // 查找 padding 元素
-        let paddingEl = this.conversationContainer.querySelector('.ait-scroll-padding');
-        
-        // isAIGenerating: null=未实现, true=生成中, false=生成结束
-        const aiGeneratingState = this.adapter?.isAIGenerating?.();
-        
-        const containerStyle = window.getComputedStyle(this.conversationContainer);
-        const isReversed = containerStyle.flexDirection === 'column-reverse';
-        
-        // 创建 padding 元素（order:9999 确保视觉在底部）
-        if (!paddingEl) {
-            paddingEl = document.createElement('div');
-            paddingEl.className = 'ait-scroll-padding';
-            paddingEl.style.cssText = 'pointer-events: none; width: 100%; flex-shrink: 0; order: 9999; height: 0; transition: height 0.3s ease-out;';
-            this._currentPadding = 0;
-        }
-        
-        // 定位 padding：避免成为 lastChild 以免干扰平台的自动滚动逻辑
-        if (isReversed) {
-            if (paddingEl !== this.conversationContainer.firstElementChild) {
-                this.conversationContainer.prepend(paddingEl);
-            }
-        } else {
-            const isFlexContainer = /flex/.test(containerStyle.display || '');
-            if (isFlexContainer) {
-                const tailEl = this.conversationContainer.lastElementChild;
-                if (!tailEl) {
-                    this.conversationContainer.appendChild(paddingEl);
-                } else if (tailEl === paddingEl) {
-                    let anchor = paddingEl.previousElementSibling;
-                    while (anchor && anchor.classList?.contains('ait-scroll-padding')) {
-                        anchor = anchor.previousElementSibling;
-                    }
-                    if (anchor) {
-                        this.conversationContainer.insertBefore(paddingEl, anchor);
-                    }
-                } else {
-                    if (paddingEl.parentElement !== this.conversationContainer || paddingEl.nextElementSibling !== tailEl) {
-                        this.conversationContainer.insertBefore(paddingEl, tailEl);
-                    }
-                }
-            } else {
-                if (paddingEl !== this.conversationContainer.lastElementChild) {
-                    this.conversationContainer.appendChild(paddingEl);
-                }
-            }
-        }
-        
-        // 只有1个节点或未实现检测时，高度设为0
-        const shouldSetZeroHeight = this.markers.length <= 1 || aiGeneratingState === null;
-        if (shouldSetZeroHeight) {
-            if (this._currentPadding !== 0) {
-                paddingEl.style.height = '0px';
-                this._currentPadding = 0;
-            }
-            return;
-        }
-        
-        // AI 生成中：保持高度不变
-        if (aiGeneratingState === true) {
-            return;
-        }
-        
-        // AI 生成结束：计算 padding = lastOffsetTop - ACTIVATE_AHEAD + 20 - cleanMaxScrollTop
-        // 向上取整，确保 padding 足够激活最后节点
-        const paddingNeeded = Math.ceil(Math.max(0, lastOffsetTop - this.ACTIVATE_AHEAD + 20 - cleanMaxScrollTop));
-        
-        // 只有高度变化时才更新（触发 CSS 过渡动画）
-        if (this._currentPadding !== paddingNeeded) {
-            paddingEl.style.height = paddingNeeded + 'px';
-            this._currentPadding = paddingNeeded;
-        }
-    }
-    
-    /**
      * ✅ 获取"干净"的滚动区域尺寸（不包含我们添加的空白元素）
      * @returns {{ scrollHeight: number, clientHeight: number, maxScrollTop: number }}
      */
@@ -3754,13 +3711,8 @@ class TimelineManager {
             return;
         }
         
-        const getOffsetTop = (element, container) => {
-            const elemRect = this._getMessageRect(element);
-            const contRect = container.getBoundingClientRect();
-            return elemRect.top - contRect.top + (container.scrollTop || 0);
-        };
+        const getOffsetTop = element => this._getMessageContentTop(element);
         
-        const { maxScrollTop: cleanMaxScrollTop } = this._getCleanScrollMetrics();
         const nodeOffsets = this.markers.map(m => getOffsetTop(m.element, this.scrollContainer));
         const firstOffsetTop = nodeOffsets[0];
         const lastOffsetTop = nodeOffsets[nodeOffsets.length - 1];
@@ -3768,8 +3720,6 @@ class TimelineManager {
         if (contentSpan <= 0) contentSpan = 1;
         this.firstUserTurnOffset = firstOffsetTop;
         this.contentSpanPx = contentSpan;
-        
-        this.debouncedUpdateScrollPadding(lastOffsetTop, cleanMaxScrollTop);
         
         let visualNChanged = false;
         this.markers.forEach((m, index) => {
@@ -3828,6 +3778,10 @@ class TimelineManager {
                 } else {
                     break;
                 }
+            }
+            const { maxScrollTop, clientHeight } = this._getCleanScrollMetrics();
+            if (clientHeight > 0 && maxScrollTop > 0 && maxScrollTop - scrollTop <= 1) {
+                activeId = this.markers[this.markers.length - 1].id;
             }
         }
         
@@ -3937,6 +3891,7 @@ class TimelineManager {
 
     destroy() {
         this._destroyed = true;
+        this.cancelScrollNavigation();
         try { this.flushScrollPositionSave(); } catch {}
         this._folderManagerInitTimer = TimelineUtils.clearTimerSafe(this._folderManagerInitTimer);
         this._initialRenderTimer = TimelineUtils.clearTimerSafe(this._initialRenderTimer);
@@ -4056,7 +4011,6 @@ class TimelineManager {
         // ✅ 移除：longPressTimer 已删除
         this.zeroTurnsTimer = TimelineUtils.clearTimerSafe(this.zeroTurnsTimer);
         this.debouncedRecalculateAndRender.cancel?.();
-        this.debouncedUpdateScrollPadding.cancel?.();
         this.clearAutoSendImageUploadPending();
         this._clearAutoBottomJumpFlashCandidate();
         this.showRafId = TimelineUtils.clearRafSafe(this.showRafId);
@@ -4765,7 +4719,7 @@ class TimelineManager {
             e.stopPropagation();
             if (!this.scrollContainer) return;
             this.setPinNavigationActive(true);
-            this.scrollContainer.scrollTop = this.temporaryPin.scrollTop;
+            this.temporaryPin.scrollTop = this.restoreScrollAnchor(this.temporaryPin.anchor, this.temporaryPin.scrollTop);
             this.scheduleScrollSync?.();
         });
 

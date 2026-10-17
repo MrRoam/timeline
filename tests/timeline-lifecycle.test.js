@@ -49,7 +49,7 @@ function loadEntry({ pathname = '/', enabled = true, hasTurns = false, failFirst
     };
     vm.createContext(context);
     const source = fs.readFileSync(path.join(__dirname, '..', 'js/timeline/index.js'), 'utf8');
-    vm.runInContext(source + '\nthis.entry = { handleUrlChange, canInitialize, manager: () => timelineManagerInstance };', context);
+    vm.runInContext(source + '\nthis.entry = { handleUrlChange, canInitialize, retry: initWithRetry, manager: () => timelineManagerInstance };', context);
     return { state, events, location, entry: context.entry };
 }
 
@@ -98,6 +98,16 @@ test('timeline retries a failed initialization without treating found messages a
     assert.equal(state.attempts, 2);
     assert.equal(state.destroyed, 1);
     assert(entry.manager());
+});
+
+test('a delayed retry preserves the instance already initialized by readiness', async () => {
+    const { state, entry } = loadEntry({ pathname: '/c/test', hasTurns: true });
+    await settle();
+    const manager = entry.manager();
+    await entry.retry(0, [0]);
+    assert.equal(state.attempts, 1);
+    assert.equal(state.destroyed, 0);
+    assert.equal(entry.manager(), manager);
 });
 
 test('DOM changes detect chat navigation without a url:change event and replace the connected old timeline', async () => {

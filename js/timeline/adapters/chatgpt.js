@@ -19,6 +19,7 @@ class ChatGPTAdapter extends SiteAdapter {
         this._turnRolesDirty = true;
         this._usesVirtualizedTurnSelector = false;
         this._usesHeadingTurnSelector = false;
+        this._usesMessageRoleSelector = false;
     }
 
     static TEXT_CACHE_MAX_TEXT_LENGTH = 200;
@@ -187,8 +188,11 @@ class ChatGPTAdapter extends SiteAdapter {
         const hasVirtualizedTurns = this._markTurnRoles();
         this._usesVirtualizedTurnSelector = hasVirtualizedTurns
             && document.querySelector('[data-turn-id-container][data-ait-turn="user"]') !== null;
-        this._usesHeadingTurnSelector = !this._usesVirtualizedTurnSelector
-            && !document.querySelector('[data-turn="user"][data-turn-id]')
+        const hasLegacyTurns = !!document.querySelector('[data-turn="user"][data-turn-id]');
+        this._usesMessageRoleSelector = !this._usesVirtualizedTurnSelector && !hasLegacyTurns
+            && !!document.querySelector('main')?.querySelector('[data-message-role="user"][id]');
+        this._usesHeadingTurnSelector = !this._usesVirtualizedTurnSelector && !hasLegacyTurns
+            && !this._usesMessageRoleSelector
             && this._markHeadingTurns();
         this._turnRolesDirty = false;
         return true;
@@ -235,7 +239,7 @@ class ChatGPTAdapter extends SiteAdapter {
         const content = element.querySelector('.whitespace-pre-wrap');
         if (content) return (content.textContent || '').replace(/\s+/g, ' ').trim();
         const copy = element.cloneNode(true);
-        copy.querySelectorAll('h4.sr-only, .sr-only, button, nav, script, style, [hidden], [aria-hidden="true"], [data-ait-time], .ait-time-label')
+        copy.querySelectorAll('h4.sr-only, h4[data-message-attribution], .sr-only, button, nav, script, style, [hidden], [aria-hidden="true"], [data-ait-time], .ait-time-label')
             .forEach(node => node.remove());
         return (copy.textContent || '').replace(/\s+/g, ' ').trim();
     }
@@ -254,13 +258,13 @@ class ChatGPTAdapter extends SiteAdapter {
     }
 
     getTimelineMessageRect(element) {
-        if (!element?.hasAttribute('data-ait-heading-turn')) return null;
+        if (!element?.hasAttribute('data-ait-heading-turn') && !element?.hasAttribute('data-message-role')) return null;
         try {
             const own = element.getBoundingClientRect();
             if (own.width > 0 && own.height > 0) return own;
             const boxes = [];
             const visit = node => {
-                if (node.matches('h4.sr-only, .sr-only, button, nav, script, style, [hidden], [aria-hidden="true"], [data-ait-time], .ait-time-label')) return;
+                if (node.matches('h4.sr-only, h4[data-message-attribution], .sr-only, button, nav, script, style, [hidden], [aria-hidden="true"], [data-ait-time], .ait-time-label')) return;
                 const style = window.getComputedStyle(node);
                 if (style.display === 'none' || style.visibility === 'hidden'
                     || style.position === 'fixed' || style.position === 'absolute') return;
@@ -296,7 +300,7 @@ class ChatGPTAdapter extends SiteAdapter {
     }
 
     getTimelineStructureSelectors() {
-        return ['[data-turn-id-container]', '[data-turn]', 'h4.sr-only'];
+        return ['[data-turn-id-container]', '[data-turn]', '[data-message-role]', 'h4.sr-only'];
     }
 
     getTimelineStructureObserverOptions() {
@@ -309,7 +313,7 @@ class ChatGPTAdapter extends SiteAdapter {
     }
 
     getTimelineStructureAttributeFilter() {
-        return ['data-turn-id-container', 'data-turn-id', 'data-is-intersecting', 'data-turn', 'class'];
+        return ['data-turn-id-container', 'data-turn-id', 'data-is-intersecting', 'data-turn', 'data-message-role', 'id', 'class'];
     }
 
     async matches(url) {
@@ -317,6 +321,7 @@ class ChatGPTAdapter extends SiteAdapter {
     }
 
     getUserMessageSelector() {
+        if (this._usesMessageRoleSelector) return '[data-message-role="user"][id]';
         if (this._usesHeadingTurnSelector) return '[data-ait-heading-turn="user"]';
         if (this._usesVirtualizedTurnSelector) {
             return '[data-turn-id-container][data-ait-turn="user"]';
@@ -325,11 +330,60 @@ class ChatGPTAdapter extends SiteAdapter {
     }
 
     getAssistantMessageSelector() {
+        if (this._usesMessageRoleSelector) return '[data-message-role="assistant"][id]';
         if (this._usesHeadingTurnSelector) return '[data-ait-heading-turn="assistant"]';
         if (document.querySelector('[data-turn-id-container][data-ait-turn="assistant"]')) {
             return '[data-turn-id-container][data-ait-turn="assistant"]';
         }
         return '[data-turn="assistant"][data-turn-id]';
+    }
+
+    getTimelineTurns() {
+        if (this._usesMessageRoleSelector) {
+            return Array.from(document.querySelectorAll('[data-message-role][id]'));
+        }
+        if (this._usesVirtualizedTurnSelector) {
+            return Array.from(document.querySelectorAll('[data-turn-id-container][data-ait-turn]'));
+        }
+        if (this._usesHeadingTurnSelector) {
+            return Array.from(document.querySelectorAll('[data-ait-heading-turn]'));
+        }
+        return Array.from(document.querySelectorAll('[data-turn][data-turn-id]'));
+    }
+
+    getTimelineTurnKey(element) {
+        const nodeId = this._extractNodeIdFromDom(element);
+        if (nodeId) return { nodeId };
+        const turns = this.getTimelineTurns();
+        const index = turns.indexOf(element);
+        if (index < 0) return null;
+        const users = turns.filter(turn => turn.getAttribute('data-ait-heading-turn') === 'user');
+        const user = turns.slice(0, index + 1).reverse()
+            .find(turn => turn.getAttribute('data-ait-heading-turn') === 'user');
+        return user ? {
+            userId: this.generateTurnId(user, users.indexOf(user)),
+            role: element.getAttribute('data-ait-heading-turn')
+        } : null;
+    }
+
+    findTimelineTurn(key) {
+        if (!key) return null;
+        // Re-prepare only on a lookup: a virtualizer may have replaced a whole turn.
+        this.prepareTimelineNodes({ force: true, reason: 'scroll-target' });
+        const turns = this.getTimelineTurns();
+        if (key.nodeId) return turns.find(turn =>
+            this._extractNodeIdFromDom(turn) === key.nodeId
+        ) || null;
+        let userIndex = -1;
+        let matchingUser = false;
+        for (const turn of turns) {
+            const role = turn.getAttribute('data-ait-heading-turn');
+            if (role === 'user') {
+                matchingUser = this.generateTurnId(turn, ++userIndex) === key.userId;
+            }
+            if (matchingUser && role === key.role) return turn;
+        }
+        return null;
     }
 
     /**
@@ -345,6 +399,7 @@ class ChatGPTAdapter extends SiteAdapter {
         
         const nodeId = element.getAttribute('data-turn-id-container')
             || element.getAttribute('data-turn-id')
+            || (element.hasAttribute('data-message-role') ? element.getAttribute('id') : null)
             || null;
         if (nodeId) return String(nodeId);
         if (element.getAttribute('data-ait-heading-turn') === 'user') {
@@ -433,7 +488,7 @@ class ChatGPTAdapter extends SiteAdapter {
     extractText(element) {
         const nodeId = this._extractNodeIdFromDom(element);
         const textElement = element.querySelector('.whitespace-pre-wrap');
-        const text = element.hasAttribute('data-ait-heading-turn')
+        const text = element.hasAttribute('data-ait-heading-turn') || element.hasAttribute('data-message-role')
             ? this._extractHeadingText(element)
             : (textElement?.textContent || '').replace(/\s+/g, ' ').trim();
         if (text) {
@@ -458,7 +513,7 @@ class ChatGPTAdapter extends SiteAdapter {
         const segs = pathname.split('/').filter(Boolean);
         
         // 检查普通对话路径: /c/{id}
-        const cIndex = segs.indexOf('c');
+        const cIndex = segs.findIndex(segment => segment === 'c' || segment === 'uc');
         if (cIndex !== -1) {
             const slug = segs[cIndex + 1];
             if (typeof slug === 'string' && slug.length > 0 && /^[A-Za-z0-9_-]+$/.test(slug)) {
@@ -504,7 +559,7 @@ class ChatGPTAdapter extends SiteAdapter {
             }
             
             // 尝试提取普通对话 ID: /c/{id}
-            const cIndex = segs.indexOf('c');
+            const cIndex = segs.findIndex(segment => segment === 'c' || segment === 'uc');
             if (cIndex !== -1) {
                 const slug = segs[cIndex + 1];
                 if (slug && /^[A-Za-z0-9_-]+$/.test(slug)) return slug;

@@ -1295,6 +1295,49 @@ test('restoring scroll position jumps the same chat to the saved position once',
     assert.equal(manager.scrollContainer.scrollTop, 64);
 });
 
+test('the physical bottom activates the last question without adding a host spacer', () => {
+    const { manager, document } = createManager();
+    manager.markers = [makeMarker(document, 'chatgpt-1'), makeMarker(document, 'chatgpt-2')];
+    manager.markers[0].offsetTop = 0;
+    manager.markers[1].offsetTop = 700;
+    manager.activeTurnId = 'chatgpt-1';
+    manager.scrollContainer = { scrollTop: 400, scrollHeight: 1200, clientHeight: 800 };
+    manager._emitActiveChange = () => {};
+    manager.computeActiveByScroll();
+    assert.equal(manager.activeTurnId, 'chatgpt-2');
+});
+
+test('late saved-position reads do not override an explicit navigation or a destroyed chat', async () => {
+    for (const action of ['navigate', 'destroy']) {
+        let finishRead;
+        const { manager } = createManager({ StorageAdapter: {
+            get: () => new Promise(resolve => { finishRead = resolve; }),
+        } });
+        manager.scrollContainer = { scrollTop: 700 };
+        const restoring = manager.restoreSavedScrollPosition();
+        if (action === 'navigate') manager.setScrollTop(900);
+        else manager._destroyed = true;
+        finishRead({ scrollTop: 100 });
+        assert.equal(await restoring, false);
+        assert.equal(manager.scrollContainer.scrollTop, action === 'navigate' ? 900 : 700);
+    }
+});
+
+test('automatic return points retain the content anchor captured before sending', () => {
+    const { manager, document } = createManager();
+    manager.markers = [makeMarker(document, 'chatgpt-1')];
+    manager.activeTurnId = 'chatgpt-1';
+    manager.scrollContainer = { scrollTop: 450, scrollHeight: 6000, clientHeight: 800 };
+    const originalAnchor = { key: { nodeId: 'answer-1' }, offset: 200 };
+    manager.captureScrollAnchor = () => originalAnchor;
+    manager._capturePotentialMessageSendSnapshot();
+    manager.captureScrollAnchor = () => ({ key: { nodeId: 'new-answer' }, offset: 0 });
+    manager.scrollContainer.scrollTop = 5200;
+    manager.adapter.isAIGenerating = () => true;
+    manager._maybeApplyPendingAutoBottomJumpPin();
+    assert.equal(manager.temporaryPin.anchor, originalAnchor);
+});
+
 test('conversation observer ignores unrelated childList mutations', () => {
     const observers = [];
     class CapturingMutationObserver {
