@@ -25,6 +25,46 @@ class ChatGPTAdapter extends SiteAdapter {
     static TEXT_CACHE_MAX_TEXT_LENGTH = 200;
     static TEXT_CACHE_MAX_ENTRIES = 3000;
 
+    _isTimelineElementActive(element, visibility = new Map()) {
+        if (!element) return false;
+        if (visibility.has(element)) return visibility.get(element);
+        let active = !element.hasAttribute?.('hidden');
+        if (active) {
+            try {
+                const style = window.getComputedStyle(element);
+                active = style.display !== 'none' && style.visibility !== 'hidden';
+            } catch {}
+        }
+        if (active && element.parentElement) {
+            active = this._isTimelineElementActive(element.parentElement, visibility);
+        }
+        visibility.set(element, active);
+        return active;
+    }
+
+    getTimelineQueryRoot(visibility = new Map()) {
+        return Array.from(document.querySelectorAll('main'))
+            .find(main => this._isTimelineElementActive(main, visibility)) || document;
+    }
+
+    _queryTimelineElements(selector, scope = document) {
+        const visibility = new Map();
+        const root = scope === document ? this.getTimelineQueryRoot(visibility) : scope;
+        // 不用尺寸或视口相交状态筛选：虚拟列表的空壳和 display:contents 消息仍然有效。
+        return Array.from(root.querySelectorAll(selector))
+            .filter(element => this._isTimelineElementActive(element, visibility));
+    }
+
+    getUserMessageElements(scope = document) {
+        return this._queryTimelineElements(this.getUserMessageSelector(), scope);
+    }
+
+    isConversationContainerCurrent(container) {
+        if (!container?.isConnected || !this._isTimelineElementActive(container)) return false;
+        const root = this.getTimelineQueryRoot();
+        return root === document || root.contains(container);
+    }
+
     _pullConvTexts(conversationId) {
         if (!conversationId) return 0;
 
@@ -124,7 +164,7 @@ class ChatGPTAdapter extends SiteAdapter {
      * 从最后一个真实轮次向前按 user/assistant 交替关系推导空壳角色。
      */
     _markTurnRoles() {
-        const all = document.querySelectorAll('[data-turn-id-container][data-is-intersecting]');
+        const all = this._queryTimelineElements('[data-turn-id-container][data-is-intersecting]');
         if (!all.length) return false;
 
         const seen = new Set();
@@ -187,10 +227,11 @@ class ChatGPTAdapter extends SiteAdapter {
 
         const hasVirtualizedTurns = this._markTurnRoles();
         this._usesVirtualizedTurnSelector = hasVirtualizedTurns
-            && document.querySelector('[data-turn-id-container][data-ait-turn="user"]') !== null;
-        const hasLegacyTurns = !!document.querySelector('[data-turn="user"][data-turn-id]');
+            && this._queryTimelineElements('[data-turn-id-container][data-ait-turn="user"]').length > 0;
+        const hasLegacyTurns = this._queryTimelineElements('[data-turn="user"][data-turn-id]').length > 0;
         this._usesMessageRoleSelector = !this._usesVirtualizedTurnSelector && !hasLegacyTurns
-            && !!document.querySelector('main')?.querySelector('[data-message-role="user"][id]');
+            && this.getTimelineQueryRoot() !== document
+            && this._queryTimelineElements('[data-message-role="user"][id]').length > 0;
         this._usesHeadingTurnSelector = !this._usesVirtualizedTurnSelector && !hasLegacyTurns
             && !this._usesMessageRoleSelector
             && this._markHeadingTurns();
@@ -200,11 +241,11 @@ class ChatGPTAdapter extends SiteAdapter {
 
     /** 2026-09 新 UI 以无障碍角色标题分隔消息，旧结构仍优先。 */
     _markHeadingTurns() {
-        const main = document.querySelector('main');
-        if (!main) return false;
+        const main = this.getTimelineQueryRoot();
+        if (main === document) return false;
         const candidates = new Map();
         const roles = new Map();
-        for (const heading of main.querySelectorAll('h4.sr-only')) {
+        for (const heading of this._queryTimelineElements('h4.sr-only', main)) {
             const label = (heading.textContent || '').replace(/\s+/g, ' ').trim()
                 .replace(/[:：]$/, '').trim().toLowerCase();
             const role = ['you said', 'you', '你说', '你說'].includes(label) ? 'user'
@@ -251,7 +292,7 @@ class ChatGPTAdapter extends SiteAdapter {
             value.replace(/\s+/g, ' ').trim() === text
         );
         if (matches.length !== 1) return null;
-        const peers = Array.from(document.querySelectorAll('[data-ait-heading-turn="user"]'));
+        const peers = this._queryTimelineElements('[data-ait-heading-turn="user"]');
         // API 与 DOM 的全文均唯一时才关联 ID，避免重复提问跳到错误位置。
         if (peers.filter(peer => this._extractHeadingText(peer) === text).length !== 1) return null;
         return matches[0][0];
@@ -308,8 +349,8 @@ class ChatGPTAdapter extends SiteAdapter {
     }
 
     getTimelineStructureObserverRoot(container) {
-        const main = document.querySelector('main');
-        return main?.contains(container) ? main : container;
+        const root = this.getTimelineQueryRoot();
+        return root !== document && root.contains(container) ? root : container;
     }
 
     getTimelineStructureAttributeFilter() {
@@ -332,7 +373,7 @@ class ChatGPTAdapter extends SiteAdapter {
     getAssistantMessageSelector() {
         if (this._usesMessageRoleSelector) return '[data-message-role="assistant"][id]';
         if (this._usesHeadingTurnSelector) return '[data-ait-heading-turn="assistant"]';
-        if (document.querySelector('[data-turn-id-container][data-ait-turn="assistant"]')) {
+        if (this._queryTimelineElements('[data-turn-id-container][data-ait-turn="assistant"]').length > 0) {
             return '[data-turn-id-container][data-ait-turn="assistant"]';
         }
         return '[data-turn="assistant"][data-turn-id]';
@@ -340,15 +381,15 @@ class ChatGPTAdapter extends SiteAdapter {
 
     getTimelineTurns() {
         if (this._usesMessageRoleSelector) {
-            return Array.from(document.querySelectorAll('[data-message-role][id]'));
+            return this._queryTimelineElements('[data-message-role][id]');
         }
         if (this._usesVirtualizedTurnSelector) {
-            return Array.from(document.querySelectorAll('[data-turn-id-container][data-ait-turn]'));
+            return this._queryTimelineElements('[data-turn-id-container][data-ait-turn]');
         }
         if (this._usesHeadingTurnSelector) {
-            return Array.from(document.querySelectorAll('[data-ait-heading-turn]'));
+            return this._queryTimelineElements('[data-ait-heading-turn]');
         }
-        return Array.from(document.querySelectorAll('[data-turn][data-turn-id]'));
+        return this._queryTimelineElements('[data-turn][data-turn-id]');
     }
 
     getTimelineTurnKey(element) {
@@ -581,6 +622,7 @@ class ChatGPTAdapter extends SiteAdapter {
     }
 
     findConversationContainer(firstMessage, context = {}) {
+        if (!firstMessage) return null;
         /**
          * 查找对话容器
          * 
@@ -592,10 +634,12 @@ class ChatGPTAdapter extends SiteAdapter {
          * 
          * 优势：比传统的向上遍历更精确，避免找到过于外层的容器
          */
-        return ContainerFinder.findConversationContainer(firstMessage, {
+        const container = ContainerFinder.findConversationContainer(firstMessage, {
             messageSelector: context.messageSelector || this.getUserMessageSelector(),
-            messages: context.userTurnElements
+            messages: context.userTurnElements || this.getUserMessageElements()
         });
+        const root = this.getTimelineQueryRoot();
+        return root !== document && !root.contains(container) ? root : container;
     }
 
     getTimelinePosition() {

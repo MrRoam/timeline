@@ -73,6 +73,7 @@ async function canInitialize() {
     });
     const selector = adapter.getUserMessageSelector();
     if (!selector) return false;
+    if (adapter.getUserMessageElements) return adapter.getUserMessageElements().length > 0;
     return document.querySelector(selector) !== null;
 }
 
@@ -289,7 +290,8 @@ async function bootstrapTimeline() {
                 }
                 if (readinessCheckInFlight || timelineInitInFlight) return;
                 if (timelineManagerInstance) {
-                    if (!timelineManagerInstance.conversationContainer?.isConnected) {
+                    const container = timelineManagerInstance.conversationContainer;
+                    if (!container?.isConnected || currentAdapter?.isConversationContainerCurrent?.(container) === false) {
                         timelineManagerInstance.ensureContainersUpToDate();
                     }
                     return;

@@ -29,6 +29,16 @@ class SiteAdapter {
         return '';
     }
 
+    /** 返回当前对话中的提问；平台可排除 SPA 保留的旧消息树。 */
+    getUserMessageElements(scope = document) {
+        const selector = this.getUserMessageSelector();
+        return selector ? Array.from(scope.querySelectorAll(selector)) : [];
+    }
+
+    isConversationContainerCurrent(container) {
+        return Boolean(container?.isConnected);
+    }
+
     /**
      * 查询消息节点前，为虚拟化平台准备派生出来的 DOM 状态。
      * 静态 DOM 平台无需实现。

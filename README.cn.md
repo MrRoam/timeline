@@ -132,7 +132,7 @@ Timeline 的核心数据默认保存在浏览器本地，包括收藏、文件�
 
 ## 本地开发
 
-本 Fork 当前只启用 ChatGPT 时间线与收藏相关功能。`4.6.19` 修复定位中断、历史展开后的偏移、Pin 返回位置和重复初始化，并支持当前原生消息结构，见 [浏览器调试与审查报告](./docs/chatgpt-scroll-debug-review.md)。`4.6.18` 的发送后返回点与刷新行为见 [修复说明](./docs/chatgpt-send-scroll-refresh.md)。
+本 Fork 当前只启用 ChatGPT 时间线与收藏相关功能。`4.6.20` 修复切换聊天后仍显示旧问题：排除页面保留的隐藏消息区，并将时间线重新绑定到当前对话。`4.6.19` 的定位、Pin 与初始化修复见 [浏览器调试与审查报告](./docs/chatgpt-scroll-debug-review.md)。`4.6.18` 的发送后返回点与刷新行为见 [修复说明](./docs/chatgpt-send-scroll-refresh.md)。
 
 本仓库是浏览器扩展项目，没有前端构建步骤。开发时可以直接加载源码目录：
 

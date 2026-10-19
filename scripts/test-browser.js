@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Real Chromium layout/observer regressions. No project dependencies are required.
-// Usage: node scripts/test-browser.js [--serve]
+// Usage: node scripts/test-browser.js [--serve | --routes-only]
 // Set TIMELINE_TEST_CHROME to select a Chrome/Chromium executable.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -53,18 +53,19 @@ function browser(...args) {
     try {
         const launch = process.env.TIMELINE_TEST_CHROME ? ['--executable-path', process.env.TIMELINE_TEST_CHROME] : [];
         console.log(await browser(...launch, 'open', url));
-        await browser('wait', '--fn', 'typeof timelineManagerInstance !== "undefined" && timelineManagerInstance?.markers.length === 12');
         for (const mode of ['legacy', 'heading', 'virtual', 'native', 'document']) {
-            if (mode !== 'legacy') {
+            const suites = process.argv.includes('--routes-only') ? ['runRouteRegressions']
+                : ['runScrollRegressions', 'runRouteRegressions'];
+            for (const suite of suites) {
                 await browser('open', `${mode === 'native' ? url.replace('/c/', '/uc/') : url}?mode=${mode}`);
                 await browser('wait', '--fn', 'typeof timelineManagerInstance !== "undefined" && timelineManagerInstance?.markers.length === 12');
+                const output = await browser('eval', '-b', Buffer.from(`${suite}()`).toString('base64'));
+                const results = JSON.parse(output);
+                for (const result of results) console.log(`${result.pass ? 'PASS' : 'FAIL'} ${mode}: ${result.name} ${JSON.stringify(result.detail)}`);
+                if (results.some(result => !result.pass)) process.exitCode = 1;
+                const errors = await browser('errors');
+                if (errors) { console.error(errors); process.exitCode = 1; }
             }
-            const output = await browser('eval', '-b', Buffer.from('runScrollRegressions()').toString('base64'));
-            const results = JSON.parse(output);
-            for (const result of results) console.log(`${result.pass ? 'PASS' : 'FAIL'} ${mode}: ${result.name} ${JSON.stringify(result.detail)}`);
-            if (results.some(result => !result.pass)) process.exitCode = 1;
-            const errors = await browser('errors');
-            if (errors) { console.error(errors); process.exitCode = 1; }
         }
     } finally {
         await browser('close').catch(error => console.error(error.message));

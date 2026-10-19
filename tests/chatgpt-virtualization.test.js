@@ -281,6 +281,37 @@ function createHeadingTimeline(document, adapter) {
     return { manager, observers };
 }
 
+test('ChatGPT replaces old questions when a hidden legacy conversation remains beside the active native transcript', () => {
+    const document = new Document();
+    const oldHistory = new Element('div');
+    const oldMain = new Element('main').append(oldHistory);
+    document.body.append(oldMain);
+    for (let index = 0; index < 2; index++) {
+        oldHistory.append(new Element('article', { attrs: { 'data-turn': 'user', 'data-turn-id': `old-${index}` } })
+            .append(new Element('div', { text: `Old question ${index}`, attrs: { class: 'whitespace-pre-wrap' } })));
+    }
+    const adapter = loadChatGPTAdapter(document);
+    adapter.prepareTimelineNodes({ force: true });
+
+    // SPA navigation can preserve the previous tree rather than disconnect it.
+    oldMain.setAttribute('hidden', '');
+    const transcript = new Element('ol', { attrs: { 'data-conversation-transcript': '' } });
+    document.body.append(new Element('main').append(transcript));
+    for (let index = 0; index < 2; index++) {
+        transcript.append(new Element('li', { attrs: { 'data-message-role': 'user', id: `new-${index}` } })
+            .append(new Element('div', { text: `Current question ${index}` })));
+    }
+    adapter.prepareTimelineNodes({ force: true });
+    const { manager } = createHeadingTimeline(document, adapter);
+    manager.conversationContainer = adapter.findConversationContainer(document.querySelector(adapter.getUserMessageSelector()));
+    manager.scrollContainer = document.body;
+    manager.recalculateAndRenderMarkers();
+
+    assert.equal(oldMain.isConnected, true);
+    assert.deepEqual(Array.from(manager.markers, marker => marker.summary), ['Current question 0', 'Current question 1']);
+    assert.equal(manager.conversationContainer, transcript);
+});
+
 test('ChatGPT refreshes a new heading question outside the old connected message root and fills delayed text', () => {
     const { document, main, turns, add } = headingFixture();
     const first = add('You said:', '第一个问题');

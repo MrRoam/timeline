@@ -27,6 +27,8 @@
     }
   };
   const thread = document.getElementById('thread');
+  // Keep the host's History API reference, as a page in MAIN world would.
+  const hostPushState = history.pushState.bind(history);
   const mode = new URLSearchParams(location.search).get('mode') || 'legacy';
   document.body.className = mode;
   for (let index = 0; index < 12; index++) {
@@ -67,6 +69,75 @@
   const turn = id => document.querySelector(`[data-host-turn-id="${id}"]`);
   const box = element => element.querySelector('.whitespace-pre-wrap');
   const topOf = element => timelineManagerInstance._getMessageRect(element).top - timelineManagerInstance._getScrollViewportTop();
+  async function runRouteRegressions() {
+    const results = [];
+    const check = (name, pass, detail) => results.push({ name, pass, detail });
+    const until = async predicate => {
+      const deadline = performance.now() + 2400;
+      while (!predicate() && performance.now() < deadline) await pause(30);
+      return predicate();
+    };
+    const previousManager = timelineManagerInstance;
+    const previousMain = document.querySelector('main');
+
+    // The URL changes before the next chat finishes loading. The new manager
+    // initially binds the old tree, which the host then retains while hidden.
+    hostPushState({}, '', `/c/next-${mode}`);
+    window.dispatchEvent(new CustomEvent('url:change'));
+    await until(() => timelineManagerInstance !== previousManager && timelineManagerInstance?.markers.length === 12);
+    previousMain.style.display = 'none';
+    const nextMain = document.createElement('main');
+    const transcript = document.createElement('ol');
+    transcript.setAttribute('data-conversation-transcript', '');
+    nextMain.appendChild(transcript);
+    const appendQuestion = index => {
+      const question = document.createElement('li');
+      question.setAttribute('data-message-role', 'user');
+      question.id = `current-user-${index}`;
+      question.textContent = `Current question ${index}`;
+      transcript.appendChild(question);
+    };
+    appendQuestion(1);
+    appendQuestion(2);
+    document.body.appendChild(nextMain);
+    const updated = await until(() => timelineManagerInstance?.markers.length === 2
+      && timelineManagerInstance.markers.every(marker => marker.summary.startsWith('Current question')));
+    const manager = timelineManagerInstance;
+    check('switching chats replaces questions from retained hidden history', updated,
+      { route: manager?.conversationId, questions: manager?.markers.map(marker => marker.summary) });
+    check('the timeline binds the active transcript and preserves the host old tree',
+      previousMain.isConnected && nextMain.contains(manager?.conversationContainer),
+      { oldConnected: previousMain.isConnected, activeContainer: nextMain.contains(manager?.conversationContainer) });
+    appendQuestion(3);
+    check('the new transcript continues to update after switching',
+      await until(() => manager?.markers.length === 3 && manager.markers[2].summary === 'Current question 3'),
+      { questions: manager?.markers.map(marker => marker.summary) });
+
+    // The next navigation reuses main and retains the old transcript inside it.
+    hostPushState({}, '', `/c/final-${mode}`);
+    window.dispatchEvent(new CustomEvent('url:change'));
+    await until(() => timelineManagerInstance !== manager && timelineManagerInstance?.markers.length === 3);
+    transcript.hidden = true;
+    const finalTranscript = document.createElement('ol');
+    finalTranscript.setAttribute('data-conversation-transcript', '');
+    for (let index = 1; index <= 2; index++) {
+      const question = document.createElement('li');
+      question.setAttribute('data-message-role', 'user');
+      question.id = `final-user-${index}`;
+      question.textContent = `Final question ${index}`;
+      finalTranscript.appendChild(question);
+    }
+    nextMain.appendChild(finalTranscript);
+    check('reusing main excludes a retained hidden transcript with the same message format',
+      await until(() => timelineManagerInstance?.markers.length === 2
+        && timelineManagerInstance.markers.every(marker => marker.summary.startsWith('Final question'))),
+      { questions: timelineManagerInstance?.markers.map(marker => marker.summary) });
+    const labels = () => Array.from(document.querySelectorAll('.ait-timeline-dot'), element => element.getAttribute('aria-label'));
+    check('rendered timeline labels contain only the current chat',
+      await until(() => labels().join('|') === 'Final question 1|Final question 2'),
+      { labels: labels() });
+    return results;
+  }
   async function runScrollRegressions() {
     const manager = timelineManagerInstance;
     const main = manager.scrollContainer;

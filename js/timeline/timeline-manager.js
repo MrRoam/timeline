@@ -270,7 +270,8 @@ class TimelineManager {
 
         let userTurnElements = [];
         try {
-            userTurnElements = Array.from(scope.querySelectorAll(selector));
+            userTurnElements = this.adapter.getUserMessageElements
+                ? this.adapter.getUserMessageElements(scope) : Array.from(scope.querySelectorAll(selector));
         } catch {}
         return { selector, userTurnElements };
     }
@@ -1411,7 +1412,8 @@ class TimelineManager {
         
         this.healthCheckInterval = setInterval(() => {
             // 检查容器是否仍然连接在文档中
-            const isContainerValid = this.conversationContainer && this.conversationContainer.isConnected;
+            const isContainerValid = this.conversationContainer?.isConnected
+                && this.adapter.isConversationContainerCurrent?.(this.conversationContainer) !== false;
             
             if (!isContainerValid) {
                 // 容器失效，尝试更新
