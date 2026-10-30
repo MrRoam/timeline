@@ -399,6 +399,58 @@ test('ChatGPT new UI initializes from role headings and excludes composer and an
     assert.equal(first.element.hasAttribute('data-ait-heading-turn'), false);
 });
 
+test('ChatGPT recognizes print-format headings by semantic role and ignores hidden print labels', () => {
+    const { document, main, add } = headingFixture();
+    const printHeading = (label, printLabel, text, role) => {
+        const turn = add('', text);
+        if (role) turn.heading.setAttribute('data-conversation-role', role);
+        turn.heading.append(new Element('span', { text: label }),
+            new Element('span', { text: printLabel, attrs: { class: 'hidden', 'aria-hidden': 'true' } }));
+        return turn;
+    };
+    const first = printHeading('You said:', 'You', 'First question', 'user');
+    const answer = printHeading('ChatGPT said:', 'ChatGPT', 'Answer', 'assistant');
+    const localized = printHeading('Vous avez dit :', 'Vous', 'Localized question', 'user');
+    const fallback = printHeading('You said:', 'You', 'Question without role attribute');
+    main.append(new Element('form').append(new Element('h4', {
+        text: 'You said:You', attrs: { class: 'sr-only', 'data-conversation-role': 'user' }
+    })));
+    answer.body.append(new Element('div', { attrs: { class: 'markdown' } }).append(new Element('h4', {
+        text: 'You said:You', attrs: { class: 'sr-only', 'data-conversation-role': 'user' }
+    })));
+    const adapter = loadChatGPTAdapter(document);
+    adapter.prepareTimelineNodes({ force: true });
+
+    assert.deepEqual(Array.from(adapter.getUserMessageElements()), [first.element, localized.element, fallback.element]);
+    assert.deepEqual(document.querySelectorAll(adapter.getAssistantMessageSelector()), [answer.element]);
+    assert.equal(adapter.extractText(first.element), 'First question');
+    assert.equal(adapter.extractText(fallback.element), 'Question without role attribute');
+    assert.equal(first.heading.textContent, 'You said:You', 'recognition must preserve the host heading');
+});
+
+test('ChatGPT observes conversation role attributes arriving or changing after heading insertion', () => {
+    const { document, add } = headingFixture();
+    const first = add('You said:', 'First question');
+    const pending = add('Unrecognized heading', 'Delayed question');
+    const adapter = loadChatGPTAdapter(document);
+    adapter.prepareTimelineNodes({ force: true });
+    const { manager, observers } = createHeadingTimeline(document, adapter);
+    manager.conversationContainer = adapter.findConversationContainer(first.element);
+    manager.scrollContainer = document.body;
+    manager.recalculateAndRenderMarkers();
+    manager.setupObservers();
+    assert.equal(manager.markers.length, 1);
+    assert.ok(observers[0].options.attributeFilter.includes('data-conversation-role'));
+
+    pending.heading.setAttribute('data-conversation-role', 'user');
+    observers[0].callback([{ type: 'attributes', target: pending.heading, attributeName: 'data-conversation-role', oldValue: null }]);
+    assert.deepEqual(Array.from(manager.markers, marker => marker.summary), ['First question', 'Delayed question']);
+    pending.heading.setAttribute('data-conversation-role', 'assistant');
+    observers[0].callback([{ type: 'attributes', target: pending.heading, attributeName: 'data-conversation-role', oldValue: 'user' }]);
+    assert.equal(manager.markers.length, 1);
+    assert.equal(pending.element.getAttribute('data-ait-heading-turn'), 'assistant');
+});
+
 test('ChatGPT keeps legacy message IDs when both legacy and new UI structures exist', () => {
     const { document, turns, add } = headingFixture();
     add('You said:', '新结构');

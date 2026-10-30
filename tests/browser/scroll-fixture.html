@@ -10,7 +10,7 @@
   .whitespace-pre-wrap { box-sizing: border-box; padding: 24px; }
   .host-user { height: 100px; background: #f5f5f5; }
   .host-assistant { height: 420px; background: #fff; }
-  body.heading article { display: contents; }
+  body.heading article, body.print article { display: contents; }
   body.document main { height: auto; overflow-y: visible; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 </style>
@@ -48,12 +48,16 @@
         heading.textContent = role === 'user' ? '你说：' : 'ChatGPT 说：';
         heading.style.cssText = 'position:absolute;width:1px;height:1px;clip-path:inset(50%)';
         turn.prepend(heading);
-      } else if (mode === 'heading') {
+      } else if (mode === 'heading' || mode === 'print') {
         turn.removeAttribute('data-turn');
         turn.removeAttribute('data-turn-id');
         const heading = document.createElement('h4');
         heading.className = 'sr-only';
-        heading.textContent = role === 'user' ? 'You said:' : 'ChatGPT said:';
+        const label = role === 'user' ? 'You said:' : 'ChatGPT said:';
+        if (mode === 'print') {
+          heading.setAttribute('data-conversation-role', role);
+          heading.innerHTML = `<span>${label}</span><span class="hidden" aria-hidden="true">${role === 'user' ? 'You' : 'ChatGPT'}</span>`;
+        } else heading.textContent = label;
         turn.prepend(heading);
       } else if (mode === 'virtual') {
         hostTurn = document.createElement('section');
@@ -190,7 +194,7 @@
       next.dataset.hostTurnId = `${role}-12`;
       if (mode === 'virtual') next.setAttribute('data-turn-id-container', `${role}-12`);
       else if (mode === 'native') next.id = `${role}-12`;
-      else if (mode !== 'heading') next.setAttribute('data-turn-id', `${role}-12`);
+      else if (mode !== 'heading' && mode !== 'print') next.setAttribute('data-turn-id', `${role}-12`);
       box(next).textContent = `${role} 13`;
       thread.appendChild(next);
     }

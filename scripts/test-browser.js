@@ -53,7 +53,7 @@ function browser(...args) {
     try {
         const launch = process.env.TIMELINE_TEST_CHROME ? ['--executable-path', process.env.TIMELINE_TEST_CHROME] : [];
         console.log(await browser(...launch, 'open', url));
-        for (const mode of ['legacy', 'heading', 'virtual', 'native', 'document']) {
+        for (const mode of ['legacy', 'heading', 'print', 'virtual', 'native', 'document']) {
             const suites = process.argv.includes('--routes-only') ? ['runRouteRegressions']
                 : ['runScrollRegressions', 'runRouteRegressions'];
             for (const suite of suites) {

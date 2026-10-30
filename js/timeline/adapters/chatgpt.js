@@ -246,12 +246,19 @@ class ChatGPTAdapter extends SiteAdapter {
         const candidates = new Map();
         const roles = new Map();
         for (const heading of this._queryTimelineElements('h4.sr-only', main)) {
-            const label = (heading.textContent || '').replace(/\s+/g, ' ').trim()
-                .replace(/[:：]$/, '').trim().toLowerCase();
-            const role = ['you said', 'you', '你说', '你說'].includes(label) ? 'user'
-                : ['chatgpt said', 'chatgpt', 'assistant', 'chatgpt 说', 'chatgpt 說'].includes(label)
-                    ? 'assistant' : null;
-            if (!role || heading.closest('form, nav, aside, pre, code, .markdown, [role="dialog"]')) continue;
+            if (heading.closest('form, nav, aside, pre, code, .markdown, [role="dialog"]')) continue;
+            // 打印版标题含额外隐藏文案（如 You said:You）；角色属性不依赖语言和排版。
+            let role = heading.getAttribute('data-conversation-role');
+            if (role !== 'user' && role !== 'assistant') {
+                const copy = heading.cloneNode(true);
+                copy.querySelectorAll('[hidden], [aria-hidden="true"]').forEach(node => node.remove());
+                const label = (copy.textContent || '').replace(/\s+/g, ' ').trim()
+                    .replace(/[:：]$/, '').trim().toLowerCase();
+                role = ['you said', 'you', '你说', '你說'].includes(label) ? 'user'
+                    : ['chatgpt said', 'chatgpt', 'assistant', 'chatgpt 说', 'chatgpt 說'].includes(label)
+                        ? 'assistant' : null;
+            }
+            if (!role) continue;
             roles.set(heading, role);
         }
         for (const [heading, role] of roles) {
@@ -354,7 +361,7 @@ class ChatGPTAdapter extends SiteAdapter {
     }
 
     getTimelineStructureAttributeFilter() {
-        return ['data-turn-id-container', 'data-turn-id', 'data-is-intersecting', 'data-turn', 'data-message-role', 'id', 'class'];
+        return ['data-turn-id-container', 'data-turn-id', 'data-is-intersecting', 'data-turn', 'data-message-role', 'data-conversation-role', 'id', 'class'];
     }
 
     async matches(url) {
