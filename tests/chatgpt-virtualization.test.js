@@ -56,7 +56,7 @@ function makeTurn(id, { role = null, text = '' } = {}) {
             attributes.delete(name);
         },
         querySelector(selector) {
-            if (selector === '[data-turn]' && role) {
+            if (selector.includes('[data-turn]') && role) {
                 return { getAttribute: name => name === 'data-turn' ? role : null };
             }
             if (selector === '.whitespace-pre-wrap' && text) {
@@ -78,7 +78,7 @@ test('ChatGPT virtualized shells produce every user turn before scrolling', () =
     ];
     const document = {
         querySelectorAll(selector) {
-            if (selector === '[data-turn-id-container][data-is-intersecting]') return turns;
+            if (selector === '[data-turn-id-container], [data-turn-key]') return turns;
             if (selector === '[data-turn-id-container][data-ait-turn="user"]') {
                 return turns.filter(turn => turn.getAttribute('data-ait-turn') === 'user');
             }
@@ -129,6 +129,39 @@ test('ChatGPT recognizes newly appended empty user shells and keeps known roles 
     adapter.prepareTimelineNodes();
     assert.deepEqual(document.querySelectorAll(adapter.getUserMessageSelector()), [first, next]);
     assert.equal(next.getAttribute('data-ait-turn'), 'user');
+});
+
+test('ChatGPT keeps eight questions when only the last three search turns have mounted content', () => {
+    const document = new Document();
+    const transcript = new Element('div', { attrs: { 'data-thread-find-target': 'conversation' } });
+    document.body.append(new Element('main').append(transcript));
+    const users = [];
+    for (let index = 0; index < 8; index++) {
+        for (const role of ['user', 'assistant']) {
+            const shell = new Element('section', { attrs: { 'data-turn-key': `${role}-${index}` } });
+            if (role === 'user') users.push(shell);
+            if (index >= 5) {
+                shell.append(new Element('article', { attrs: {
+                    'data-chatgpt-search-unit-key': `${role}-${index}:${role}`,
+                    'data-chatgpt-search-message-ids': `${role}-${index}`,
+                } }).append(new Element('h4', { attrs: { class: 'sr-only', 'data-conversation-role': role } }),
+                    new Element('div', { text: `${role} ${index}`, attrs: { 'data-user-message-bubble': '' } })));
+            }
+            transcript.append(shell);
+        }
+    }
+    const adapter = loadChatGPTAdapter(document);
+    adapter.prepareTimelineNodes({ force: true });
+    const { manager } = createHeadingTimeline(document, adapter);
+    manager.conversationContainer = transcript;
+    manager.scrollContainer = document.body;
+    manager.recalculateAndRenderMarkers();
+    assert.equal(manager.markers.length, 8, 'unmounted old questions must retain timeline markers');
+    assert.deepEqual(Array.from(manager.markers, marker => marker.element), users);
+    assert.equal(manager.markers[7].summary, 'user 7');
+    assert.equal(adapter.generateTurnId(users[0], 0), 'chatgpt-user-0');
+    assert.equal(manager.mutationTouchesUserTurns([{ type: 'childList', target: transcript,
+        addedNodes: [new Element('section', { attrs: { 'data-turn-key': 'user-8' } })], removedNodes: [] }]), true);
 });
 
 class EventDocument {
@@ -502,15 +535,128 @@ test('ChatGPT retries a missed API snapshot and matches full unique questions wi
     assert.equal(adapter._turnTextCache.size, 0);
 });
 
-function loadCapture(document, fetch) {
+function loadCapture(document, fetch, location = {
+    href: 'https://chatgpt.com/c/12345678-1234-1234-1234-123456789abc', origin: 'https://chatgpt.com',
+    pathname: '/c/12345678-1234-1234-1234-123456789abc'
+}) {
     const window = { fetch };
-    const context = { window, document, URL,
-        location: { href: 'https://chatgpt.com/c/test', origin: 'https://chatgpt.com' },
+    const context = { window, document, URL, Request, Headers, AbortController, location,
         CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init.detail; } } };
     vm.createContext(context);
     vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'js/apiCapture/chatgpt.js'), 'utf8'), context);
     return window;
 }
+
+const captureConversationId = '12345678-1234-1234-1234-123456789abc';
+const captureMessage = (id, text) => ({ id, author: { role: 'user' }, content: { content_type: 'text', parts: [text] } });
+const captureResponse = json => ({ ok: true, json: async () => json, clone: () => ({ json: async () => json }) });
+const settleCapture = () => new Promise(resolve => setImmediate(resolve));
+function pullCapturedTexts(document) {
+    let payload;
+    const listener = event => { payload = JSON.parse(event.detail); };
+    document.addEventListener('ait-gpt-user-texts-result', listener);
+    document.dispatchEvent({ type: 'ait-gpt-user-texts-pull', detail: captureConversationId });
+    document.removeEventListener('ait-gpt-user-texts-result', listener);
+    return payload.texts;
+}
+
+test('ChatGPT loads older question texts on demand from paginated history without scrolling', async () => {
+    const document = new Document();
+    const requests = [];
+    const window = loadCapture(document, async (input, init) => {
+        const request = new Request(input instanceof Request ? input : new URL(input, 'https://chatgpt.com'), init);
+        requests.push(request);
+        const before = new URL(request.url).searchParams.get('before');
+        return captureResponse(before ? {
+            messages: [captureMessage('u1', '第一个问题'), captureMessage('u2', '第二个问题')],
+            page_info: { has_previous_page: false, start_cursor: 'oldest' }
+        } : {
+            messages: [captureMessage('u3', '第三个问题'), captureMessage('u4', '第四个问题')],
+            page_info: { has_previous_page: true, start_cursor: 'older-cursor' }
+        });
+    });
+    await window.fetch(`/backend-api/conversations/${captureConversationId}?num_turns=2`, {
+        headers: { 'x-test-context': 'page-session' }, credentials: 'include'
+    });
+    await settleCapture();
+    assert.equal(requests.length, 1, 'history reads start only when the timeline asks for texts');
+    pullCapturedTexts(document);
+    await settleCapture();
+    assert.deepEqual(pullCapturedTexts(document), {
+        u1: '第一个问题', u2: '第二个问题', u3: '第三个问题', u4: '第四个问题'
+    });
+    assert.equal(requests.length, 2);
+    assert.equal(new URL(requests[1].url).searchParams.get('before'), 'older-cursor');
+    assert.equal(requests[1].headers.get('x-test-context'), 'page-session');
+    assert.equal(requests[1].credentials, 'include');
+});
+
+test('ChatGPT visiting an older page never replaces already captured recent questions', async () => {
+    const document = new Document();
+    const window = loadCapture(document, async input => captureResponse({
+        messages: [captureMessage(String(input).includes('before=') ? 'u1' : 'u2', '问题')],
+        page_info: { has_previous_page: false }
+    }));
+    await window.fetch(`/backend-api/conversations/${captureConversationId}`);
+    await settleCapture();
+    await window.fetch(`/backend-api/conversations/${captureConversationId}?before=old`);
+    await settleCapture();
+    assert.deepEqual(pullCapturedTexts(document), { u1: '问题', u2: '问题' });
+});
+
+test('ChatGPT ignores delayed history from a replaced branch and aborts the old read', async () => {
+    const document = new Document();
+    let finishHistory;
+    let historySignal;
+    let snapshot = 0;
+    const window = loadCapture(document, async (input, init) => {
+        if (String(input).includes('before=')) {
+            historySignal = init.signal;
+            return new Promise(resolve => { finishHistory = resolve; });
+        }
+        return captureResponse(++snapshot === 1 ? {
+            messages: [captureMessage('old-latest', '原分支')],
+            page_info: { has_previous_page: true, start_cursor: 'old-cursor' }
+        } : { messages: [captureMessage('new-latest', '编辑后的分支')], page_info: { has_previous_page: false } });
+    });
+    await window.fetch(`/backend-api/conversations/${captureConversationId}`);
+    await settleCapture();
+    pullCapturedTexts(document);
+    assert.equal(historySignal.aborted, false);
+    await window.fetch(`/backend-api/conversations/${captureConversationId}`);
+    await settleCapture();
+    assert.equal(historySignal.aborted, true);
+    finishHistory(captureResponse({ messages: [captureMessage('old-history', '过期历史')], page_info: { has_previous_page: false } }));
+    await settleCapture();
+    assert.deepEqual(pullCapturedTexts(document), { 'new-latest': '编辑后的分支' });
+});
+
+test('ChatGPT stops history reads on navigation and repeated cursors without losing captured texts', async () => {
+    for (const failure of ['navigation', 'cursor', 'http']) {
+        const document = new Document();
+        const location = { href: `https://chatgpt.com/c/${captureConversationId}`, origin: 'https://chatgpt.com',
+            pathname: `/c/${captureConversationId}` };
+        let requests = 0;
+        const window = loadCapture(document, async input => {
+            requests++;
+            if (String(input).includes('before=')) {
+                if (failure === 'navigation') location.pathname = '/c/another-conversation';
+                if (failure === 'http') return { ok: false };
+            }
+            return captureResponse({ messages: [captureMessage('u1', '已捕获的问题')],
+                page_info: { has_previous_page: true, start_cursor: 'same-cursor' } });
+        }, location);
+        await window.fetch(`/backend-api/conversations/${captureConversationId}`);
+        await settleCapture();
+        pullCapturedTexts(document);
+        await settleCapture();
+        for (let attempt = 0; attempt < 3; attempt++) {
+            assert.deepEqual(pullCapturedTexts(document), { u1: '已捕获的问题' });
+            await settleCapture();
+        }
+        assert.equal(requests, 2, failure);
+    }
+});
 
 test('ChatGPT captures new conversations messages from URL and Request inputs, including voice text', async () => {
     const document = new Document();

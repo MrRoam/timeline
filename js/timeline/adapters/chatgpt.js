@@ -18,6 +18,7 @@ class ChatGPTAdapter extends SiteAdapter {
         this._textCacheConvId = null;
         this._turnRolesDirty = true;
         this._usesVirtualizedTurnSelector = false;
+        this._usesKeyTurnSelector = false;
         this._usesHeadingTurnSelector = false;
         this._usesMessageRoleSelector = false;
     }
@@ -147,7 +148,7 @@ class ChatGPTAdapter extends SiteAdapter {
             if (changedCount > 0) callback({
                 conversationId,
                 changedCount,
-                rebuildMarkers: this._usesHeadingTurnSelector
+                rebuildMarkers: true
             });
         };
         document.addEventListener('ait-gpt-user-texts-updated', handler);
@@ -164,22 +165,34 @@ class ChatGPTAdapter extends SiteAdapter {
      * 从最后一个真实轮次向前按 user/assistant 交替关系推导空壳角色。
      */
     _markTurnRoles() {
-        const all = this._queryTimelineElements('[data-turn-id-container][data-is-intersecting]');
+        const all = this._queryTimelineElements('[data-turn-id-container], [data-turn-key]');
         if (!all.length) return false;
 
         const seen = new Set();
+        const selected = new Set();
         const containers = [];
         all.forEach(element => {
-            const id = element.getAttribute('data-turn-id-container');
+            const id = this._extractNodeIdFromDom(element);
             if (!id || seen.has(id)) return;
+            for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+                if (selected.has(parent)) return;
+            }
             seen.add(id);
+            selected.add(element);
             containers.push(element);
         });
 
         const roles = new Array(containers.length).fill(null);
         let nextRole = null;
         for (let index = containers.length - 1; index >= 0; index--) {
-            const realRole = containers[index].querySelector('[data-turn]')?.getAttribute('data-turn');
+            const element = containers[index];
+            const roleElement = element.querySelector('[data-turn], [data-message-role], [data-conversation-role], [data-chatgpt-search-unit-key]');
+            const readRole = node => node?.getAttribute('data-turn')
+                || node?.getAttribute('data-message-role')
+                || node?.getAttribute('data-conversation-role')
+                || node?.getAttribute('data-chatgpt-search-unit-key')?.split(':').pop();
+            const realRole = readRole(element) || readRole(roleElement)
+                || (this._capturedTextIds.has(this._extractNodeIdFromDom(element)) ? 'user' : null);
             const knownRole = containers[index].getAttribute('data-ait-turn');
             let role = realRole === 'user' || realRole === 'assistant' ? realRole
                 : knownRole === 'user' || knownRole === 'assistant' ? knownRole : null;
@@ -203,9 +216,10 @@ class ChatGPTAdapter extends SiteAdapter {
         containers.forEach((element, index) => {
             const role = roles[index];
             if (role === 'user') {
-                const id = element.getAttribute('data-turn-id-container');
+                const id = this._extractNodeIdFromDom(element);
                 if (id && !this._turnTextCache.has(id)) {
-                    const rawText = element.querySelector('.whitespace-pre-wrap')?.textContent;
+                    const rawText = (element.querySelector('[data-user-message-bubble]')
+                        || element.querySelector('.whitespace-pre-wrap'))?.textContent;
                     const text = (rawText || '').replace(/\s+/g, ' ').trim();
                     if (text) this._cacheTurnText(id, text);
                 }
@@ -226,8 +240,11 @@ class ChatGPTAdapter extends SiteAdapter {
         if (!context.force && !this._turnRolesDirty) return false;
 
         const hasVirtualizedTurns = this._markTurnRoles();
+        this._usesKeyTurnSelector = hasVirtualizedTurns
+            && this._queryTimelineElements('[data-turn-key][data-ait-turn="user"]').length > 0;
         this._usesVirtualizedTurnSelector = hasVirtualizedTurns
-            && this._queryTimelineElements('[data-turn-id-container][data-ait-turn="user"]').length > 0;
+            && (this._usesKeyTurnSelector
+                || this._queryTimelineElements('[data-turn-id-container][data-ait-turn="user"]').length > 0);
         const hasLegacyTurns = this._queryTimelineElements('[data-turn="user"][data-turn-id]').length > 0;
         this._usesMessageRoleSelector = !this._usesVirtualizedTurnSelector && !hasLegacyTurns
             && this.getTimelineQueryRoot() !== document
@@ -348,7 +365,7 @@ class ChatGPTAdapter extends SiteAdapter {
     }
 
     getTimelineStructureSelectors() {
-        return ['[data-turn-id-container]', '[data-turn]', '[data-message-role]', 'h4.sr-only'];
+        return ['[data-turn-id-container]', '[data-turn-key]', '[data-chatgpt-search-unit-key]', '[data-turn]', '[data-message-role]', 'h4.sr-only'];
     }
 
     getTimelineStructureObserverOptions() {
@@ -361,7 +378,7 @@ class ChatGPTAdapter extends SiteAdapter {
     }
 
     getTimelineStructureAttributeFilter() {
-        return ['data-turn-id-container', 'data-turn-id', 'data-is-intersecting', 'data-turn', 'data-message-role', 'data-conversation-role', 'id', 'class'];
+        return ['data-turn-id-container', 'data-turn-key', 'data-chatgpt-search-unit-key', 'data-chatgpt-search-message-ids', 'data-turn-id', 'data-is-intersecting', 'data-turn', 'data-message-role', 'data-conversation-role', 'id', 'class'];
     }
 
     async matches(url) {
@@ -372,6 +389,7 @@ class ChatGPTAdapter extends SiteAdapter {
         if (this._usesMessageRoleSelector) return '[data-message-role="user"][id]';
         if (this._usesHeadingTurnSelector) return '[data-ait-heading-turn="user"]';
         if (this._usesVirtualizedTurnSelector) {
+            if (this._usesKeyTurnSelector) return '[data-turn-key][data-ait-turn="user"], [data-turn-id-container][data-ait-turn="user"]';
             return '[data-turn-id-container][data-ait-turn="user"]';
         }
         return '[data-turn="user"][data-turn-id]';
@@ -380,6 +398,7 @@ class ChatGPTAdapter extends SiteAdapter {
     getAssistantMessageSelector() {
         if (this._usesMessageRoleSelector) return '[data-message-role="assistant"][id]';
         if (this._usesHeadingTurnSelector) return '[data-ait-heading-turn="assistant"]';
+        if (this._usesKeyTurnSelector) return '[data-turn-key][data-ait-turn="assistant"], [data-turn-id-container][data-ait-turn="assistant"]';
         if (this._queryTimelineElements('[data-turn-id-container][data-ait-turn="assistant"]').length > 0) {
             return '[data-turn-id-container][data-ait-turn="assistant"]';
         }
@@ -391,6 +410,7 @@ class ChatGPTAdapter extends SiteAdapter {
             return this._queryTimelineElements('[data-message-role][id]');
         }
         if (this._usesVirtualizedTurnSelector) {
+            if (this._usesKeyTurnSelector) return this._queryTimelineElements('[data-turn-key][data-ait-turn], [data-turn-id-container][data-ait-turn]');
             return this._queryTimelineElements('[data-turn-id-container][data-ait-turn]');
         }
         if (this._usesHeadingTurnSelector) {
@@ -446,6 +466,7 @@ class ChatGPTAdapter extends SiteAdapter {
         if (!element) return null;
         
         const nodeId = element.getAttribute('data-turn-id-container')
+            || element.getAttribute('data-turn-key')
             || element.getAttribute('data-turn-id')
             || (element.hasAttribute('data-message-role') ? element.getAttribute('id') : null)
             || null;
@@ -535,7 +556,8 @@ class ChatGPTAdapter extends SiteAdapter {
 
     extractText(element) {
         const nodeId = this._extractNodeIdFromDom(element);
-        const textElement = element.querySelector('.whitespace-pre-wrap');
+        const textElement = element.querySelector('[data-user-message-bubble]')
+            || element.querySelector('.whitespace-pre-wrap');
         const text = element.hasAttribute('data-ait-heading-turn') || element.hasAttribute('data-message-role')
             ? this._extractHeadingText(element)
             : (textElement?.textContent || '').replace(/\s+/g, ' ').trim();

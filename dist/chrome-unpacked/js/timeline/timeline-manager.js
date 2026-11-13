@@ -1516,7 +1516,7 @@ class TimelineManager {
     }
 
     setupEventListeners() {
-        // 接口响应可能晚于初次 marker 渲染；到达后只补文本，不改变几何结构。
+        // 接口响应可能补齐历史文本和空壳角色；由适配器决定是否重新识别节点。
         this._unsubscribeCapturedChatsData = this.adapter.subscribeCapturedChatsDataUpdated?.((detail) => {
             if (this._destroyed) return;
             if (!detail?.conversationId || detail.conversationId !== this.conversationId) return;

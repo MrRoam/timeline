@@ -30,6 +30,7 @@
   // Keep the host's History API reference, as a page in MAIN world would.
   const hostPushState = history.pushState.bind(history);
   const mode = new URLSearchParams(location.search).get('mode') || 'legacy';
+  const unmountedHistory = new Map();
   document.body.className = mode;
   for (let index = 0; index < 12; index++) {
     for (const role of ['user', 'assistant']) {
@@ -64,6 +65,21 @@
         hostTurn.setAttribute('data-turn-id-container', `${role}-${index}`);
         hostTurn.setAttribute('data-is-intersecting', 'false');
         hostTurn.appendChild(turn);
+      } else if (mode === 'key') {
+        turn.removeAttribute('data-turn');
+        turn.removeAttribute('data-turn-id');
+        turn.setAttribute('data-chatgpt-search-unit-key', `${role}-${index}:${role}`);
+        turn.setAttribute('data-chatgpt-search-message-ids', `${role}-${index}`);
+        if (role === 'user') turn.firstElementChild.setAttribute('data-user-message-bubble', '');
+        const heading = document.createElement('h4');
+        heading.className = 'sr-only';
+        heading.setAttribute('data-conversation-role', role);
+        turn.prepend(heading);
+        hostTurn = document.createElement('section');
+        hostTurn.setAttribute('data-turn-key', `${role}-${index}`);
+        hostTurn.style.minHeight = role === 'user' ? '100px' : '420px';
+        if (index < 9) unmountedHistory.set(hostTurn, turn);
+        else hostTurn.appendChild(turn);
       }
       hostTurn.dataset.hostTurnId = `${role}-${index}`;
       thread.appendChild(hostTurn);
@@ -73,6 +89,24 @@
   const turn = id => document.querySelector(`[data-host-turn-id="${id}"]`);
   const box = element => element.querySelector('.whitespace-pre-wrap');
   const topOf = element => timelineManagerInstance._getMessageRect(element).top - timelineManagerInstance._getScrollViewportTop();
+  async function runKeyHistoryRegressions() {
+    const manager = timelineManagerInstance;
+    const initial = { count: manager.markers.length, mounted: thread.querySelectorAll('[data-user-message-bubble]').length };
+    const results = [{ name: 'unmounted search turns retain all twelve question markers at initialization',
+      pass: initial.count === 12 && initial.mounted === 3, detail: initial }];
+    for (const [shell, content] of unmountedHistory) shell.appendChild(content);
+    await pause(600);
+    const first = manager.markers[0];
+    results.push({ name: 'mounting old content fills its question without changing marker identity',
+      pass: manager.markers.length === 12 && first.id === 'chatgpt-user-0' && first.summary === 'Question 1',
+      detail: { count: manager.markers.length, id: first.id, summary: first.summary } });
+    for (const shell of unmountedHistory.keys()) shell.replaceChildren();
+    await pause(600);
+    results.push({ name: 'unmounting history preserves both its markers and cached question text',
+      pass: manager.markers.length === 12 && manager.markers[0].summary === 'Question 1',
+      detail: { count: manager.markers.length, summary: manager.markers[0].summary } });
+    return results;
+  }
   async function runRouteRegressions() {
     const results = [];
     const check = (name, pass, detail) => results.push({ name, pass, detail });
@@ -143,6 +177,10 @@
     return results;
   }
   async function runScrollRegressions() {
+    if (mode === 'key') {
+      for (const [shell, content] of unmountedHistory) shell.appendChild(content);
+      await pause(600);
+    }
     const manager = timelineManagerInstance;
     const main = manager.scrollContainer;
     const results = [];
@@ -193,6 +231,11 @@
       const next = turn(`${role}-11`).cloneNode(true);
       next.dataset.hostTurnId = `${role}-12`;
       if (mode === 'virtual') next.setAttribute('data-turn-id-container', `${role}-12`);
+      else if (mode === 'key') {
+        next.setAttribute('data-turn-key', `${role}-12`);
+        next.querySelector('[data-chatgpt-search-unit-key]').setAttribute('data-chatgpt-search-unit-key', `${role}-12:${role}`);
+        next.querySelector('[data-chatgpt-search-message-ids]').setAttribute('data-chatgpt-search-message-ids', `${role}-12`);
+      }
       else if (mode === 'native') next.id = `${role}-12`;
       else if (mode !== 'heading' && mode !== 'print') next.setAttribute('data-turn-id', `${role}-12`);
       box(next).textContent = `${role} 13`;
