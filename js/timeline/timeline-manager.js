@@ -537,6 +537,7 @@ class TimelineManager {
                 tempPinBtn.type = 'button';
                 tempPinBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1 1 1 0 0 1 1 1z"/></svg>';
                 tempPinBtn.setAttribute('aria-label', chrome.i18n.getMessage('pinChatAction') || 'Pin chat');
+                tempPinBtn.setAttribute('aria-keyshortcuts', 'Alt+q');
                 tempPinBtn.style.display = 'flex';
 
                 tempPinBtn.addEventListener('mouseenter', () => {
@@ -544,7 +545,7 @@ class TimelineManager {
                         'temp-pin-btn',
                         'button',
                         tempPinBtn,
-                        tempPinBtn.getAttribute('aria-label') || chrome.i18n.getMessage('pinChatAction') || 'Pin chat',
+                        `${tempPinBtn.getAttribute('aria-label') || 'Pin chat'} (Alt + Q)`,
                         { placement: 'left' }
                     );
                 });
@@ -1557,6 +1558,7 @@ class TimelineManager {
         
         // ✅ 键盘导航：上下方向键切换节点
         this.onKeyDown = (e) => {
+            if (this.handleTemporaryPinShortcut(e)) return;
             // 只处理上下方向键
             if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
             
@@ -2684,6 +2686,18 @@ class TimelineManager {
         }
     }
     
+    handleTemporaryPinShortcut(event) {
+        if (event.defaultPrevented || event.isComposing || event.repeat ||
+            !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+            event.code !== 'KeyQ' || event.getModifierState?.('AltGraph')) return false;
+        if (this.getTimelineFeatures()?.timeline_tooltipActions !== true ||
+            !this.isPlatformEnabled() || !this.scrollContainer) return false;
+
+        event.preventDefault();
+        this.toggleCurrentTemporaryPin();
+        return true;
+    }
+
     async toggleCurrentTemporaryPin() {
         if (!this.scrollContainer) {
             window.globalToastManager?.info?.(chrome.i18n.getMessage('pinNoTarget') || 'No answer to pin yet');

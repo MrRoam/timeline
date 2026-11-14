@@ -366,6 +366,33 @@ function makeMarker(document, id) {
     };
 }
 
+test('Alt+Q pins once and ignores composition, repeats and other modifiers', () => {
+    const { manager } = createManager();
+    manager.scrollContainer = { scrollTop: 120 };
+    let calls = 0;
+    let prevented = 0;
+    manager.toggleCurrentTemporaryPin = () => { calls++; };
+    const event = { code: 'KeyQ', altKey: true, preventDefault() { prevented++; } };
+    assert.equal(manager.handleTemporaryPinShortcut(event), true);
+    for (const override of [
+        { altKey: false }, { code: 'KeyP' }, { ctrlKey: true }, { metaKey: true },
+        { shiftKey: true }, { repeat: true }, { isComposing: true },
+        { defaultPrevented: true }, { getModifierState: () => true },
+    ]) {
+        assert.equal(manager.handleTemporaryPinShortcut({ ...event, ...override }), false);
+    }
+    manager.adapter.getFeatures = () => ({ timeline_tooltipActions: false });
+    assert.equal(manager.handleTemporaryPinShortcut(event), false);
+    manager.adapter.getFeatures = () => ({ timeline_tooltipActions: true });
+    manager.isPlatformEnabled = () => false;
+    assert.equal(manager.handleTemporaryPinShortcut(event), false);
+    manager.isPlatformEnabled = () => true;
+    manager.scrollContainer = null;
+    assert.equal(manager.handleTemporaryPinShortcut(event), false);
+    assert.equal(calls, 1);
+    assert.equal(prevented, 1);
+});
+
 test('togglePin creates a single temporary marker without writing pin storage', async () => {
     const { manager, document, storageCalls } = createManager();
     const first = makeMarker(document, 'chatgpt-1');
