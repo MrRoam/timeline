@@ -11,6 +11,12 @@
  */
 
 // --- Entry Point and SPA Navigation Handler ---
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type === 'TIMELINE_LOCAL_UPDATE_PROBE' && sender.id === chrome.runtime.id) {
+        sendResponse({ timeline: true });
+    }
+});
+
 let timelineManagerInstance = null;
 let currentUrl = location.href;
 let initVersion = 0; // Version number for initialization, increments on URL change

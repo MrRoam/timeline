@@ -24,7 +24,7 @@ function loadEntry({ pathname = '/', enabled = true, hasTurns = false, failFirst
                 return () => { state.unsubscribed++; };
             } }) }
         },
-        chrome: { storage: {
+        chrome: { runtime: { onMessage: { addListener() {} } }, storage: {
             local: { get: async () => ({ timelinePlatformSettings: { chatgpt: state.enabled } }) },
             onChanged: { addListener() {} }
         } },
