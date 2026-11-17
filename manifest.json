@@ -11,21 +11,22 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  
+
   "permissions": [
     "storage",
     "unlimitedStorage",
     "activeTab"
   ],
-  
+
   "background": {
     "service_worker": "js/background.js"
   },
-  
+
   "content_scripts": [
     {
       "matches": [
         "https://chatgpt.com/*",
+        "https://*.chatgpt.com/*",
         "https://chat.openai.com/*"
       ],
       "js": ["js/apiCapture/chatgpt.js"],
@@ -34,11 +35,55 @@
     },
     {
       "matches": [
+        "https://claude.ai/*",
+        "https://*.claude.ai/*"
+      ],
+      "js": ["js/apiCapture/claude.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
         "https://chatgpt.com/*",
-        "https://chat.openai.com/*"
+        "https://*.chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*",
+        "https://claude.ai/*",
+        "https://*.claude.ai/*",
+        "https://chat.deepseek.com/*",
+        "https://doubao.com/*",
+        "https://*.doubao.com/*",
+        "https://grok.com/*",
+        "https://*.grok.com/*",
+        "https://kimi.com/*",
+        "https://*.kimi.com/*",
+        "https://kimi.moonshot.cn/*",
+        "https://qianwen.com/*",
+        "https://*.qianwen.com/*",
+        "https://chat.qwen.ai/*",
+        "https://yiyan.baidu.com/*",
+        "https://yuanbao.tencent.com/*",
+        "https://perplexity.ai/*",
+        "https://*.perplexity.ai/*",
+        "https://notebooklm.google.com/*",
+        "https://copilot.microsoft.com/*",
+        "https://aistudio.xiaomimimo.com/*",
+        "https://poe.com/*",
+        "https://*.poe.com/*",
+        "https://arena.ai/*",
+        "https://muse.ai/*",
+        "https://consensus.app/*",
+        "https://www.consensus.app/*",
+        "https://wenxin.baidu.com/*",
+        "https://chatglm.cn/*",
+        "https://www.meta.ai/*",
+        "https://venice.ai/*",
+        "https://chat2.gptcat.cc/*",
+        "https://chat.z.ai/*"
       ],
       "js": [
         "js/global/constants.js",
+        "js/timeline/adapters/custom-sites.js",
         "js/global/url-change-monitor/index.js",
         "js/global/dom-observer-manager/index.js",
         "js/global/tooltip-manager/index.js",
@@ -55,6 +100,19 @@
         "js/panelModal/index.js",
         "js/timeline/adapters/base.js",
         "js/timeline/adapters/chatgpt.js",
+        "js/timeline/adapters/gemini.js",
+        "js/timeline/adapters/claude.js",
+        "js/timeline/adapters/deepseek.js",
+        "js/timeline/adapters/doubao.js",
+        "js/timeline/adapters/grok.js",
+        "js/timeline/adapters/kimi.js",
+        "js/timeline/adapters/perplexity.js",
+        "js/timeline/adapters/qwen.js",
+        "js/timeline/adapters/tongyi.js",
+        "js/timeline/adapters/yiyan.js",
+        "js/timeline/adapters/yuanbao.js",
+        "js/timeline/adapters/notebooklm.js",
+        "js/timeline/adapters/custom.js",
         "js/timeline/adapters/registry.js",
         "js/timeline/common.js",
         "js/timeline/container-finder.js",
@@ -79,21 +137,66 @@
       "run_at": "document_idle"
     }
   ],
-  
+
   "web_accessible_resources": [
     {
       "resources": [
         "icons/icon128.png",
         "images/logo.png",
-        "images/logo/chatgpt.webp"
+        "images/logo/chatgpt.webp",
+        "images/logo/claude.webp",
+        "images/logo/deepseek.webp",
+        "images/logo/doubao.webp",
+        "images/logo/gemini.webp",
+        "images/logo/grok.webp",
+        "images/logo/kimi.webp",
+        "images/logo/notebooklm.svg",
+        "images/logo/perplexity.webp",
+        "images/logo/tongyi.webp",
+        "images/logo/wenxin.webp",
+        "images/logo/yuanbao.webp"
       ],
       "matches": [
         "https://chatgpt.com/*",
-        "https://chat.openai.com/*"
+        "https://*.chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://gemini.google.com/*",
+        "https://claude.ai/*",
+        "https://*.claude.ai/*",
+        "https://chat.deepseek.com/*",
+        "https://doubao.com/*",
+        "https://*.doubao.com/*",
+        "https://grok.com/*",
+        "https://*.grok.com/*",
+        "https://kimi.com/*",
+        "https://*.kimi.com/*",
+        "https://kimi.moonshot.cn/*",
+        "https://qianwen.com/*",
+        "https://*.qianwen.com/*",
+        "https://chat.qwen.ai/*",
+        "https://yiyan.baidu.com/*",
+        "https://yuanbao.tencent.com/*",
+        "https://perplexity.ai/*",
+        "https://*.perplexity.ai/*",
+        "https://notebooklm.google.com/*",
+        "https://copilot.microsoft.com/*",
+        "https://aistudio.xiaomimimo.com/*",
+        "https://poe.com/*",
+        "https://*.poe.com/*",
+        "https://arena.ai/*",
+        "https://muse.ai/*",
+        "https://consensus.app/*",
+        "https://www.consensus.app/*",
+        "https://wenxin.baidu.com/*",
+        "https://chatglm.cn/*",
+        "https://www.meta.ai/*",
+        "https://venice.ai/*",
+        "https://chat2.gptcat.cc/*",
+        "https://chat.z.ai/*"
       ]
     }
   ],
-  
+
   "action": {
     "default_title": "__MSG_extName__"
   }

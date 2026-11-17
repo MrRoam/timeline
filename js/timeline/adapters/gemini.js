@@ -21,6 +21,39 @@ class GeminiAdapter extends SiteAdapter {
         return 'user-query';
     }
 
+    getAssistantMessageSelector() {
+        return 'model-response';
+    }
+
+    observesTimelineMarkerText() {
+        return true;
+    }
+
+    getTimelineStructureAttributeFilter() {
+        return ['id'];
+    }
+
+    static findChatScroller(element) {
+        for (let node = element; node && node !== document.body; node = node.parentElement) {
+            const { overflowY } = getComputedStyle(node);
+            if (overflowY === 'auto' || overflowY === 'scroll') return node;
+        }
+        return null;
+    }
+
+    static isHistoryLoading() {
+        const bars = document.querySelectorAll('mat-progress-bar[mode="indeterminate"], .mdc-linear-progress--indeterminate');
+        return [...bars].some(bar => {
+            if (bar.closest('.conversation-container, model-response')) return false;
+            const rect = bar.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 && getComputedStyle(bar).visibility === 'visible';
+        });
+    }
+
+    getConflictingTimelineSelectors() {
+        return ['.gemini-timeline-bar'];
+    }
+
     /**
      * 从 DOM 元素中提取稳定的 nodeId
      * Gemini 的虚拟滚动会隐藏/重建节点，导致数组索引不可靠
@@ -164,10 +197,11 @@ class GeminiAdapter extends SiteAdapter {
         }
     }
 
-    findConversationContainer(firstMessage) {
+    findConversationContainer(firstMessage, { userTurnElements } = {}) {
         // 查找对话容器 - 使用 LCA（最近共同祖先）算法
         return ContainerFinder.findConversationContainer(firstMessage, {
-            messageSelector: this.getUserMessageSelector()
+            messageSelector: this.getUserMessageSelector(),
+            messages: userTurnElements
         });
     }
 
@@ -242,6 +276,50 @@ class GeminiAdapter extends SiteAdapter {
         const sendButton = document.querySelector('.send-button');
         // ✅ 必须返回 boolean，找不到按钮视为 false（未生成），而不是 null（未实现）
         return !!(sendButton && sendButton.classList.contains('stop'));
+    }
+
+    observeAIGeneration(onChange) {
+        const selector = '.send-button';
+        const composerSelector = 'input-area-v2, .input-area';
+        const controls = `${composerSelector}, ${selector}`;
+        const containsControl = (node, query) => node.nodeType === Node.ELEMENT_NODE
+            && (node.matches(query) || node.querySelector(query));
+        let target = null;
+        const observer = new MutationObserver(mutations => {
+            const changed = mutations.some(mutation => {
+                if (mutation.type === 'attributes') {
+                    return mutation.target.matches(selector) || mutation.oldValue?.split(/\s+/).includes('send-button');
+                }
+                return [...mutation.addedNodes, ...mutation.removedNodes].some(node => containsControl(node, selector));
+            });
+            if (changed) onChange();
+        });
+        function observeComposer() {
+            const button = document.querySelector(selector);
+            const next = button?.closest(composerSelector) || button || document.querySelector(composerSelector);
+            if (next === target) return false;
+            observer.disconnect();
+            target = next;
+            if (target) {
+                observer.observe(target, {
+                    childList: true, subtree: true, attributes: true,
+                    attributeFilter: ['class'], attributeOldValue: true
+                });
+            }
+            return true;
+        }
+        // Rebind when Gemini replaces the composer, without observing class changes across the page.
+        const unsubscribe = DOMObserverManager.getInstance().subscribeBody('gemini-generation-composer', {
+            callback: ({ addedNodes }) => {
+                const replaced = (target && !target.isConnected) || addedNodes.some(node => containsControl(node, controls));
+                if (replaced && observeComposer()) onChange();
+            }
+        });
+        observeComposer();
+        return () => {
+            unsubscribe();
+            observer.disconnect();
+        };
     }
     
 }

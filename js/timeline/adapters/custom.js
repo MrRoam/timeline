@@ -1,7 +1,7 @@
 /**
  * Config-driven adapter for user-added AI sites.
  *
- * The adapter intentionally accepts only selectors and simple URL includes.
+ * The adapter accepts selectors and declarative URL rules.
  * It never executes user-provided JavaScript.
  */
 class CustomSiteAdapter extends SiteAdapter {
@@ -24,7 +24,7 @@ class CustomSiteAdapter extends SiteAdapter {
     }
 
     getUserMessageSelector() {
-        return this.config.userMessageSelector || '';
+        return this._scopeConversationSelector(this.config.userMessageSelector);
     }
 
     getFeatures() {
@@ -45,23 +45,35 @@ class CustomSiteAdapter extends SiteAdapter {
     }
 
     isConversationRoute(pathname) {
+        const urls = this.config.conversationUrls;
+        const hasExactUrls = Array.isArray(urls) && urls.length > 0;
+        if (hasExactUrls && urls.includes(location.href)) return true;
+
         if (this.config.conversationUrlPattern) {
-            return this._matchesConversationUrl(location.href);
+            return this._matchConversationUrl(location.href) !== null;
         }
 
         const includes = this.config.conversationPathIncludes || [];
-        if (!includes.length) return true;
+        if (!includes.length) return !hasExactUrls;
         return includes.some(part => part && pathname.includes(part));
     }
 
-    findConversationContainer(firstMessage) {
-        const selector = this.config.conversationContainerSelector || '';
+    getTimelineRouteId(url) {
+        return this._matchConversationUrl(url.href)?.groups?.conversationId;
+    }
+
+    findConversationContainer(firstMessage, { userTurnElements } = {}) {
+        const selector = this._scopeConversationSelector(this.config.conversationContainerSelector);
+        if (this.config.conversationScopeSelectors) {
+            return selector ? firstMessage?.closest(selector) || null : null;
+        }
         if (selector) {
-            const container = document.querySelector(selector);
+            const container = firstMessage?.closest(selector);
             if (container) return container;
         }
         return ContainerFinder.findConversationContainer(firstMessage, {
-            messageSelector: this.getUserMessageSelector()
+            messageSelector: this.getUserMessageSelector(),
+            messages: userTurnElements
         }) || super.findConversationContainer(firstMessage);
     }
 
@@ -71,6 +83,14 @@ class CustomSiteAdapter extends SiteAdapter {
             right: this.config.timelineRight || '22px',
             bottom: this.config.timelineBottom || '120px'
         };
+    }
+
+    getTimelineBarBackground() {
+        return this.config.timelineBarBackground || null;
+    }
+
+    getTimelineZIndex() {
+        return this.config.timelineZIndex ?? null;
     }
 
     getScrollOffset() {
@@ -109,16 +129,31 @@ class CustomSiteAdapter extends SiteAdapter {
         }
     }
 
-    _matchesConversationUrl(url) {
+    _scopeConversationSelector(selector) {
+        if (!selector) return '';
+        const scopes = this.config.conversationScopeSelectors;
+        if (!scopes) return selector;
+
+        const url = location.href;
+        const urls = this.config.conversationUrls;
+        let scope = scopes.exactUrl;
+        if (!Array.isArray(urls) || !urls.includes(url)) {
+            const conversationId = this._matchConversationUrl(url)?.groups?.conversationId;
+            scope = conversationId && scopes.urlPattern?.replace('{conversationId}', () => CSS.escape(conversationId));
+        }
+        return scope ? `:is(${scope}) :is(${selector})` : '';
+    }
+
+    _matchConversationUrl(url) {
         const pattern = this.config.conversationUrlPattern;
-        if (!pattern) return true;
+        if (!pattern) return null;
 
         try {
             const regex = new RegExp(pattern);
             const urlWithoutProtocol = String(url || '').replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
-            return regex.test(url) || regex.test(urlWithoutProtocol);
+            return regex.exec(url) || regex.exec(urlWithoutProtocol);
         } catch {
-            return false;
+            return null;
         }
     }
 

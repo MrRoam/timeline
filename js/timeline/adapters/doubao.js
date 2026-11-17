@@ -18,6 +18,10 @@ class DoubaoAdapter extends SiteAdapter {
         return '[data-message-id].justify-end';
     }
 
+    getAssistantMessageSelector() {
+        return '[data-message-id]:not(.justify-end)';
+    }
+
     /**
      * 从 DOM 元素中提取 nodeId
      * 豆包的 nodeId 来自子元素的 data-message-id 属性
@@ -106,21 +110,33 @@ class DoubaoAdapter extends SiteAdapter {
     }
 
     isConversationRoute(pathname) {
-        // Doubao conversation URLs: /chat/数字ID
-        return pathname.includes('/chat/');
+        // Doubao conversation URLs: /chat/数字ID；分享页使用 /share。
+        // 分享落地页没有对话时，conversationExport 还会通过用户消息节点二次拦截。
+        return pathname.includes('/chat/') || pathname === '/share' || pathname.startsWith('/share/');
     }
 
-    extractConversationId(pathname) {
+    extractConversationId(pathname, url = location) {
         try {
             // Extract conversation ID from /chat/数字 pattern
             const match = pathname.match(/\/chat\/(\d+)/);
-            return match ? match[1] : null;
+            if (match) return match[1];
+
+            if (pathname === '/share' || pathname.startsWith('/share/')) {
+                const params = new URLSearchParams(url.search);
+                return params.get('conversationId')
+                    || params.get('shareId')
+                    || params.get('threadId')
+                    || params.get('botId')
+                    || pathname.split('/').filter(Boolean)[1]
+                    || null;
+            }
+            return null;
         } catch {
             return null;
         }
     }
 
-    findConversationContainer(firstMessage) {
+    findConversationContainer(firstMessage, { userTurnElements } = {}) {
         /**
          * 查找对话容器
          * 
@@ -133,7 +149,8 @@ class DoubaoAdapter extends SiteAdapter {
          * 优势：比传统的向上遍历更精确，避免找到过于外层的容器
          */
         return ContainerFinder.findConversationContainer(firstMessage, {
-            messageSelector: this.getUserMessageSelector()
+            messageSelector: this.getUserMessageSelector(),
+            messages: userTurnElements
         });
     }
     

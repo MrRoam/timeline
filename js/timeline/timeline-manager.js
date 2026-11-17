@@ -514,6 +514,8 @@ class TimelineManager {
         }
         this.ui.timelineBar = timelineBar;
         this.applyTimelineActiveColor();
+        this.applyTimelineBarBackground?.();
+        this.applyTimelineZIndex?.();
         this.injectAutoSendImageUploadToggle(wrapper, timelineBar);
         
         // Apply site-specific position from adapter to wrapper
@@ -1141,7 +1143,11 @@ class TimelineManager {
         
         // 如果节点没有变化，只更新渲染，不重新计算位置
         if (!needsRecalculation && this.markers.length > 0) {
-            this.refreshPlaceholderSummaries({ force: true });
+            if (this.adapter.observesTimelineMarkerText?.()) {
+                this.refreshMarkerSummaries();
+            } else {
+                this.refreshPlaceholderSummaries({ force: true });
+            }
             // 只更新视图和同步状态（不涉及位置计算）
             this.syncTimelineTrackToMain();
             this.updateVirtualRangeAndRender();
@@ -1471,6 +1477,9 @@ class TimelineManager {
             childList: true,
             subtree: true
         };
+        if (this.adapter.observesTimelineMarkerText?.() === true) {
+            options.characterData = true;
+        }
         this._timelineStructureAttributeFilter = Array.from(new Set(
             (this.adapter.getTimelineStructureAttributeFilter?.() || []).filter(Boolean)
         ));
@@ -1551,11 +1560,12 @@ class TimelineManager {
      */
     setupDomCheckObserver() {
         // 已知的冲突时间轴选择器（包括其他插件和平台自带的时间轴）
-        const conflictingSelectors = [
+        const conflictingSelectors = Array.from(new Set([
             '.gemini-timeline-bar',      // Gemini 时间轴插件
             '.chatgpt-timeline-bar',     // ChatGPT 时间轴插件
             '[style*="--scroll-nav-page-padding"]', // DeepSeek 原生滚动导航时间轴
-        ];
+            ...(this.adapter.getConflictingTimelineSelectors?.() || []),
+        ].filter(Boolean)));
         
         // 检查并更新时间轴可见性
         const checkAndUpdateTimelineVisibility = () => {
@@ -2479,6 +2489,7 @@ class TimelineManager {
         requestAnimationFrame(() => {
             // ✅ 同步深色模式类
             this.syncDarkModeClass();
+            this.applyTimelineBarBackground?.();
 
             // 重新缓存 CSS 变量
             this.cacheTooltipConfig();
@@ -3608,11 +3619,15 @@ class TimelineManager {
 
     /** 用适配器的最新缓存补齐尚未加载的提问文本。 */
     refreshPlaceholderSummaries({ force = false } = {}) {
+        return this.refreshMarkerSummaries({ placeholdersOnly: !force });
+    }
+
+    refreshMarkerSummaries({ placeholdersOnly = false } = {}) {
         let updatedCount = 0;
         this.markers.forEach(marker => {
             if (!marker.element) return;
             const previous = String(marker.summary || '').trim();
-            if (!force && !this.adapter.isPlaceholderSummary?.(previous)) return;
+            if (placeholdersOnly && !this.adapter.isPlaceholderSummary?.(previous)) return;
 
             try {
                 const fresh = String(this.adapter.extractText(marker.element) || '').trim();
@@ -3875,7 +3890,7 @@ class TimelineManager {
 
     syncTimelineTrackToMain() {
         if (!this.ui.track || !this.scrollContainer || !this.contentHeight) return;
-        if (this._apiTimelineMode) {
+        if (this._apiTimelineMode || this.adapter?.isReverseScroll?.()) {
             const index = this.markers.findIndex(marker => marker.id === this.activeTurnId);
             if (index >= 0 && Number.isFinite(this.yPositions?.[index])) {
                 this.ui.track.scrollTop = Math.max(0, this.yPositions[index] - this.ui.track.clientHeight * 0.45);
@@ -4683,6 +4698,39 @@ class TimelineManager {
         const platformId = this._currentPlatform?.id || 'default';
         const color = resolveTimelineActiveColor(platformId, this.timelineActiveColorByPlatform);
         this.ui.timelineBar.style.setProperty('--ait-timeline-dot-active-color', color);
+    }
+
+    resolveTimelineBarBackground(backgroundConfig) {
+        if (!backgroundConfig) return '';
+        if (typeof backgroundConfig === 'string') return backgroundConfig.trim();
+        if (typeof backgroundConfig === 'object') {
+            const isDark = document.documentElement?.getAttribute?.('data-timeline-theme') === 'dark';
+            const candidate = isDark
+                ? (backgroundConfig.dark || backgroundConfig.light)
+                : (backgroundConfig.light || backgroundConfig.dark);
+            return typeof candidate === 'string' ? candidate.trim() : '';
+        }
+        return '';
+    }
+
+    applyTimelineBarBackground() {
+        if (!this.ui.timelineBar) return;
+        const background = this.resolveTimelineBarBackground(this.adapter.getTimelineBarBackground?.());
+        if (background) {
+            this.ui.timelineBar.style.setProperty?.('--timeline-bar-bg', background);
+        } else {
+            this.ui.timelineBar.style.removeProperty?.('--timeline-bar-bg');
+        }
+    }
+
+    applyTimelineZIndex() {
+        if (!this.ui.wrapper) return;
+        const zIndex = this.adapter.getTimelineZIndex?.();
+        if (zIndex !== null && zIndex !== undefined && zIndex !== '') {
+            this.ui.wrapper.style.zIndex = String(zIndex);
+        } else {
+            this.ui.wrapper.style.removeProperty?.('z-index');
+        }
     }
 
     /**

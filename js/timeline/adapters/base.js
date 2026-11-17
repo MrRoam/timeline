@@ -71,6 +71,34 @@ class SiteAdapter {
         return false;
     }
 
+    getAssistantMessageSelector() {
+        return '';
+    }
+
+    getConflictingTimelineSelectors() {
+        return [];
+    }
+
+    getTimelineBarBackground() {
+        return null;
+    }
+
+    getTimelineZIndex() {
+        return null;
+    }
+
+    isReverseScroll() {
+        return false;
+    }
+
+    observesTimelineMarkerText() {
+        return false;
+    }
+
+    getTimelineVisibilityAttributeSelectors() {
+        return [];
+    }
+
     /** 订阅平台接口捕获数据的更新。 */
     subscribeCapturedChatsDataUpdated(callback) {
         return () => {};
