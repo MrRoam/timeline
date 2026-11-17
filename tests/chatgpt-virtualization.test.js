@@ -296,7 +296,7 @@ function createHeadingTimeline(document, adapter) {
     }
     const context = { document, location: { pathname: '/c/test', href: 'https://chatgpt.com/c/test' }, console,
         window: { getComputedStyle: element => ({ overflowY: 'visible', ...element.style }) },
-        MutationObserver: Observer, ResizeObserver: Observer, IntersectionObserver: Observer,
+        MutationObserver: Observer, ResizeObserver: Observer, IntersectionObserver: Observer, AbortController,
         CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init.detail; } },
         TIMELINE_CONFIG: { DEBOUNCE_DELAY: 350 },
         TimelineUtils: { clearTimerSafe: () => null },
@@ -551,13 +551,17 @@ const captureConversationId = '12345678-1234-1234-1234-123456789abc';
 const captureMessage = (id, text) => ({ id, author: { role: 'user' }, content: { content_type: 'text', parts: [text] } });
 const captureResponse = json => ({ ok: true, json: async () => json, clone: () => ({ json: async () => json }) });
 const settleCapture = () => new Promise(resolve => setImmediate(resolve));
-function pullCapturedTexts(document) {
+function pullCapturedPayload(document) {
     let payload;
     const listener = event => { payload = JSON.parse(event.detail); };
     document.addEventListener('ait-gpt-user-texts-result', listener);
     document.dispatchEvent({ type: 'ait-gpt-user-texts-pull', detail: captureConversationId });
     document.removeEventListener('ait-gpt-user-texts-result', listener);
-    return payload.texts;
+    return payload;
+}
+
+function pullCapturedTexts(document) {
+    return pullCapturedPayload(document).texts;
 }
 
 test('ChatGPT loads older question texts on demand from paginated history without scrolling', async () => {
@@ -566,6 +570,9 @@ test('ChatGPT loads older question texts on demand from paginated history withou
     const window = loadCapture(document, async (input, init) => {
         const request = new Request(input instanceof Request ? input : new URL(input, 'https://chatgpt.com'), init);
         requests.push(request);
+        if (new URL(request.url).pathname === `/backend-api/conversation/${captureConversationId}`) {
+            return { ok: false, status: 404 };
+        }
         const before = new URL(request.url).searchParams.get('before');
         return captureResponse(before ? {
             messages: [captureMessage('u1', '第一个问题'), captureMessage('u2', '第二个问题')],
@@ -582,13 +589,17 @@ test('ChatGPT loads older question texts on demand from paginated history withou
     assert.equal(requests.length, 1, 'history reads start only when the timeline asks for texts');
     pullCapturedTexts(document);
     await settleCapture();
-    assert.deepEqual(pullCapturedTexts(document), {
+    const payload = pullCapturedPayload(document);
+    assert.deepEqual(payload.texts, {
         u1: '第一个问题', u2: '第二个问题', u3: '第三个问题', u4: '第四个问题'
     });
-    assert.equal(requests.length, 2);
-    assert.equal(new URL(requests[1].url).searchParams.get('before'), 'older-cursor');
-    assert.equal(requests[1].headers.get('x-test-context'), 'page-session');
-    assert.equal(requests[1].credentials, 'include');
+    assert.deepEqual(payload.timeline.entries.map(entry => entry.id), ['u1', 'u2', 'u3', 'u4']);
+    assert.equal(payload.timeline.complete, true);
+    const paginatedRequest = requests.find(req => new URL(req.url).searchParams.has('before'));
+    assert.ok(paginatedRequest);
+    assert.equal(new URL(paginatedRequest.url).searchParams.get('before'), 'older-cursor');
+    assert.equal(paginatedRequest.headers.get('x-test-context'), 'page-session');
+    assert.equal(paginatedRequest.credentials, 'include');
 });
 
 test('ChatGPT visiting an older page never replaces already captured recent questions', async () => {
@@ -610,6 +621,9 @@ test('ChatGPT ignores delayed history from a replaced branch and aborts the old 
     let historySignal;
     let snapshot = 0;
     const window = loadCapture(document, async (input, init) => {
+        if (String(input).includes(`/backend-api/conversation/${captureConversationId}`)) {
+            return { ok: false, status: 404 };
+        }
         if (String(input).includes('before=')) {
             historySignal = init.signal;
             return new Promise(resolve => { finishHistory = resolve; });
@@ -622,6 +636,7 @@ test('ChatGPT ignores delayed history from a replaced branch and aborts the old 
     await window.fetch(`/backend-api/conversations/${captureConversationId}`);
     await settleCapture();
     pullCapturedTexts(document);
+    await settleCapture();
     assert.equal(historySignal.aborted, false);
     await window.fetch(`/backend-api/conversations/${captureConversationId}`);
     await settleCapture();
@@ -636,10 +651,13 @@ test('ChatGPT stops history reads on navigation and repeated cursors without los
         const document = new Document();
         const location = { href: `https://chatgpt.com/c/${captureConversationId}`, origin: 'https://chatgpt.com',
             pathname: `/c/${captureConversationId}` };
-        let requests = 0;
+        let beforeRequests = 0;
         const window = loadCapture(document, async input => {
-            requests++;
+            if (String(input).includes(`/backend-api/conversation/${captureConversationId}`)) {
+                return { ok: false, status: 404 };
+            }
             if (String(input).includes('before=')) {
+                beforeRequests++;
                 if (failure === 'navigation') location.pathname = '/c/another-conversation';
                 if (failure === 'http') return { ok: false };
             }
@@ -654,7 +672,7 @@ test('ChatGPT stops history reads on navigation and repeated cursors without los
             assert.deepEqual(pullCapturedTexts(document), { u1: '已捕获的问题' });
             await settleCapture();
         }
-        assert.equal(requests, 2, failure);
+        assert.equal(beforeRequests, 1, failure);
     }
 });
 
@@ -825,4 +843,174 @@ test('ChatGPT zero-box new UI messages use body geometry for positions, highligh
     assert.equal(manager._getMessageHeight(legacy), 78);
     assert.equal(manager.mutationTouchesUserTurns([{ type: 'characterData', target: { parentElement: elements[0].querySelector('h4') } }]), true);
     assert.equal(manager.mutationTouchesUserTurns([{ type: 'characterData', target: { parentElement: elements[0].querySelector('div') } }]), true);
+});
+
+test('ChatGPT renders every API-captured turn even when older turns have no DOM elements and keeps live sends', () => {
+    const document = new Document();
+    document.createElement = tag => new Element(tag);
+    const transcript = new Element('div', { attrs: {
+        'data-thread-find-target': 'conversation',
+        'data-chatgpt-conversation-selection-target': '12345678-1234-1234-1234-123456789abc'
+    } });
+    const main = new Element('main').append(transcript);
+    document.body.append(main);
+    const makeDomTurn = (id, text) => new Element('section', {
+        attrs: { 'data-turn-id-container': id, 'data-is-intersecting': 'true' },
+        rect: { top: 100, bottom: 160, left: 0, right: 500, width: 500, height: 60 }
+    }).append(new Element('article', { attrs: { 'data-turn': 'user' } })
+        .append(new Element('div', { text, attrs: { class: 'whitespace-pre-wrap' } })));
+    const domTurn3 = makeDomTurn('u3', '第三个问题');
+    transcript.append(domTurn3);
+
+    document.addEventListener('ait-gpt-user-texts-pull', event => {
+        const conversationId = typeof event.detail === 'string' && event.detail.startsWith('{')
+            ? JSON.parse(event.detail).conversationId : event.detail;
+        document.dispatchEvent({
+            type: 'ait-gpt-user-texts-result',
+            detail: JSON.stringify({
+                conversationId,
+                texts: { u1: '第一个问题', u2: '第二个问题', u3: '第三个问题' },
+                timeline: {
+                    complete: true,
+                    revision: 'rev-1',
+                    entries: [
+                        { id: 'u1', text: '第一个问题' },
+                        { id: 'u2', text: '第二个问题' },
+                        { id: 'u3', text: '第三个问题' }
+                    ]
+                },
+                historyLoading: false
+            })
+        });
+    });
+
+    const adapter = loadChatGPTAdapter(document);
+    adapter.prepareTimelineNodes({ force: true });
+    const { manager } = createHeadingTimeline(document, adapter);
+    manager.conversationContainer = transcript;
+    manager.scrollContainer = main;
+    Object.assign(manager, {
+        _pageUrl: '',
+        conversationId: '12345678-1234-1234-1234-123456789abc',
+        setPinNavigationActive() {},
+        _captureAutoBottomJumpCandidate() {},
+        handleInitialNavigationOrRestore: async () => false
+    });
+    manager.recalculateAndRenderMarkers();
+
+    assert.deepEqual(Array.from(manager.markers, marker => marker.id), ['chatgpt-u1', 'chatgpt-u2', 'chatgpt-u3']);
+    assert.deepEqual(Array.from(manager.markers, marker => marker.summary), ['第一个问题', '第二个问题', '第三个问题']);
+    assert.equal(manager.markers[0].element, null);
+    assert.equal(manager.markers[2].element, domTurn3);
+
+    // 新发送的提问在 API 快照更新前即应追加到时间轴末尾。
+    const domTurn4 = makeDomTurn('u4', '刚刚发送的新问题');
+    transcript.append(domTurn4);
+    adapter.prepareTimelineNodes({ force: true });
+    manager.recalculateAndRenderMarkers();
+    assert.deepEqual(Array.from(manager.markers, marker => marker.id), ['chatgpt-u1', 'chatgpt-u2', 'chatgpt-u3', 'chatgpt-u4']);
+    assert.equal(manager.markers[3].summary, '刚刚发送的新问题');
+});
+
+test('ChatGPT isolates current conversation rows from stale transcript panes during navigation', () => {
+    const document = new Document();
+    const oldPane = new Element('div', { attrs: {
+        'data-thread-find-target': 'conversation',
+        'data-chatgpt-conversation-selection-target': 'old-conv'
+    } });
+    const newPane = new Element('div', { attrs: {
+        'data-thread-find-target': 'conversation',
+        'data-chatgpt-conversation-selection-target': '12345678-1234-1234-1234-123456789abc'
+    } });
+    const main = new Element('main').append(oldPane, newPane);
+    document.body.append(main);
+    const oldTurn = new Element('article', { attrs: { 'data-turn': 'user', 'data-turn-id': 'old-1' } });
+    const newTurn = new Element('article', { attrs: { 'data-turn': 'user', 'data-turn-id': 'new-1' } });
+    oldPane.append(oldTurn);
+    newPane.append(newTurn);
+
+    const adapter = loadChatGPTAdapter(document);
+    adapter.prepareTimelineNodes({ force: true });
+    assert.deepEqual(Array.from(adapter.getUserMessageElements()), [newTurn]);
+});
+
+test('ChatGPT resolves and scrolls to unmounted API-captured turns when clicked', async () => {
+    const document = new Document();
+    document.createElement = tag => new Element(tag);
+    const transcript = new Element('div', { attrs: {
+        'data-thread-find-target': 'conversation',
+        'data-chatgpt-conversation-selection-target': '12345678-1234-1234-1234-123456789abc'
+    } });
+    const main = new Element('main').append(transcript);
+    Object.assign(main, {
+        scrollTop: 500,
+        scrollHeight: 2000,
+        clientHeight: 500,
+        _rect: { top: 0, bottom: 500, left: 0, right: 500, width: 500, height: 500 }
+    });
+    document.body.append(main);
+    const domTurn3 = new Element('section', {
+        attrs: { 'data-turn-id-container': 'u3', 'data-is-intersecting': 'true' },
+        rect: { top: 400, bottom: 460, left: 0, right: 500, width: 500, height: 60 }
+    }).append(new Element('article', { attrs: { 'data-turn': 'user' } })
+        .append(new Element('div', { text: '第三个问题', attrs: { class: 'whitespace-pre-wrap' } })));
+    transcript.append(domTurn3);
+
+    document.addEventListener('ait-gpt-user-texts-pull', event => {
+        const conversationId = typeof event.detail === 'string' && event.detail.startsWith('{')
+            ? JSON.parse(event.detail).conversationId : event.detail;
+        document.dispatchEvent({
+            type: 'ait-gpt-user-texts-result',
+            detail: JSON.stringify({
+                conversationId,
+                texts: { u1: '第一个问题', u2: '第二个问题', u3: '第三个问题' },
+                timeline: {
+                    complete: true,
+                    revision: 'rev-1',
+                    entries: [
+                        { id: 'u1', text: '第一个问题' },
+                        { id: 'u2', text: '第二个问题' },
+                        { id: 'u3', text: '第三个问题' }
+                    ]
+                },
+                historyLoading: false
+            })
+        });
+    });
+
+    const adapter = loadChatGPTAdapter(document);
+    adapter.prepareTimelineNodes({ force: true });
+    const scrolledTo = [];
+    const { manager } = createHeadingTimeline(document, adapter);
+    manager.conversationContainer = transcript;
+    manager.scrollContainer = main;
+    Object.assign(manager, {
+        _pageUrl: '',
+        conversationId: '12345678-1234-1234-1234-123456789abc',
+        setPinNavigationActive() {},
+        _captureAutoBottomJumpCandidate() {},
+        handleInitialNavigationOrRestore: async () => false,
+        smoothScrollTo(element) { scrolledTo.push(element); }
+    });
+    manager.recalculateAndRenderMarkers();
+    assert.equal(manager.markers[0].element, null);
+
+    // 模拟滚动到顶部后虚拟列表挂载出 u1
+    let mountedTurn1 = null;
+    adapter._waitForTimelineRender = async () => {
+        if (!mountedTurn1) {
+            mountedTurn1 = new Element('section', {
+                attrs: { 'data-turn-id-container': 'u1', 'data-is-intersecting': 'true' },
+                rect: { top: 50, bottom: 110, left: 0, right: 500, width: 500, height: 60 }
+            }).append(new Element('article', { attrs: { 'data-turn': 'user' } })
+                .append(new Element('div', { text: '第一个问题', attrs: { class: 'whitespace-pre-wrap' } })));
+            transcript.children.unshift(mountedTurn1);
+            mountedTurn1.parentElement = transcript;
+        }
+    };
+
+    assert.equal(manager.scrollToIndex(0), true);
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(scrolledTo, [mountedTurn1]);
 });

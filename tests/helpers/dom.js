@@ -16,6 +16,10 @@ class Element {
         elements.forEach(element => { element.parentElement = this; this.children.push(element); });
         return this;
     }
+    appendChild(element) {
+        this.append(element);
+        return element;
+    }
     get textContent() { return this._text + this.children.map(child => child.textContent).join(''); }
     set textContent(text) { this._text = text; this.children = []; }
     get childNodes() { return this.children; }
@@ -69,6 +73,8 @@ class Element {
             this.parentElement = null;
         }
     }
+    addEventListener() {}
+    removeEventListener() {}
 }
 
 class Document {
@@ -78,6 +84,7 @@ class Document {
     }
     querySelectorAll(selector) { return this.body.querySelectorAll(selector); }
     querySelector(selector) { return this.body.querySelector(selector); }
+    createElement(tag) { return new Element(tag); }
     getElementById(id) { return this.querySelector(`[id="${id}"]`); }
     addEventListener(type, handler) {
         const handlers = this.listeners.get(type) || new Set();

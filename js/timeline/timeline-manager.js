@@ -14,12 +14,85 @@
  * - Virtual rendering for performance
  */
 
+class TimelineRouteRows {
+    constructor() {
+        this.owners = new WeakMap();
+    }
+
+    key(adapter, href) {
+        try {
+            const url = typeof URL !== 'undefined'
+                ? new URL(href, 'https://localhost')
+                : { origin: '', pathname: typeof location !== 'undefined' ? (location.pathname || '') : '', href: String(href || '') };
+            const id = adapter.getTimelineRouteId?.(url) ?? adapter.extractConversationId?.(url.pathname, url);
+            return id ? `${url.origin}:${id}` : url.href;
+        } catch {
+            return String(href || '');
+        }
+    }
+
+    filter(adapter, elements, route) {
+        if (adapter.filterTimelineUserElements) return adapter.filterTimelineUserElements(elements);
+        const visible = elements.filter(element => element.isConnected !== false
+            && element.getClientRects?.().length !== 0
+            && !element.closest?.('[hidden], [aria-hidden="true"], [inert]'));
+        const confirmedRows = adapter.getTimelineConfirmedRows?.(visible);
+        return visible.filter(element => {
+            if (confirmedRows?.has(element)) return true;
+            const previous = this.owners.get(element);
+            if (!previous || previous.route === route) return true;
+            const id = this.rowId(adapter, element);
+            if (previous.id !== id) return true;
+            const hasConfirmedIdentity = adapter.getTimelineConfirmedRows && adapter.getTimelineDomRowId?.(element);
+            return !hasConfirmedIdentity && previous.text !== this.rowText(element);
+        });
+    }
+
+    remember(adapter, elements, route, { initial = false, previousElements = [] } = {}) {
+        if (adapter.filterTimelineUserElements || elements.length === 0) return false;
+        const rows = elements.map(element => ({
+            element, route, text: this.rowText(element), id: this.rowId(adapter, element)
+        }));
+        const confirmedRows = adapter.getTimelineConfirmedRows?.(elements);
+        const matchesOwner = (owner, row) =>
+            owner?.route === route && owner.id === row.id && owner.text === row.text;
+        const hasAnchor = rows.some(row => confirmedRows?.has(row.element)
+            || matchesOwner(this.owners.get(row.element), row));
+        const isSameTranscript = rows.length === previousElements.length
+            && rows.every((row, index) => matchesOwner(this.owners.get(previousElements[index]), row));
+        if (!initial && !hasAnchor && !isSameTranscript) return false;
+        for (const { element, ...owner } of rows) this.owners.set(element, owner);
+        return true;
+    }
+
+    rowId(adapter, element) {
+        return adapter.getTimelineDomRowId?.(element) ?? adapter.generateTurnId?.(element, 0);
+    }
+
+    rowText(element) {
+        const labelSelector = '.ait-chat-time-label';
+        if (!element.cloneNode || !element.querySelector(labelSelector)) return element.textContent;
+        const copy = element.cloneNode(true);
+        copy.querySelectorAll(labelSelector).forEach(label => label.remove());
+        return copy.textContent;
+    }
+}
+
 class TimelineManager {
-    constructor(adapter) {
+    constructor(adapter, routeRows = new TimelineRouteRows()) {
         if (!adapter) {
             throw new Error('TimelineManager requires a SiteAdapter');
         }
         this.adapter = adapter;
+        this._pageUrl = typeof location !== 'undefined' ? (location.href || '') : '';
+        this._routeRows = routeRows;
+        this._rowRoute = routeRows.key(adapter, this._pageUrl);
+        this._rowScope = null;
+        this._ownedTimelineRows = [];
+        this._apiTimelineMode = false;
+        this._capturedIndexesStable = null;
+        this._markerNavigationController = null;
+        this._nodeNavigationTask = null;
         this.scrollContainer = null;
         this.conversationContainer = null;
         this.markers = [];
@@ -263,6 +336,10 @@ class TimelineManager {
         return resolved?.scrollTop ?? fallbackScrollTop;
     }
 
+    isCurrentPage() {
+        return !this._destroyed && (!this._pageUrl || typeof location === 'undefined' || !location.href || this._pageUrl === location.href);
+    }
+
     _collectUserTurnElements({ scope = document, forcePrepare = false, reason = '' } = {}) {
         this.adapter.prepareTimelineNodes?.({ force: forcePrepare, reason });
         const selector = this.adapter.getUserMessageSelector();
@@ -273,17 +350,29 @@ class TimelineManager {
             userTurnElements = this.adapter.getUserMessageElements
                 ? this.adapter.getUserMessageElements(scope) : Array.from(scope.querySelectorAll(selector));
         } catch {}
+        userTurnElements = this._routeRows.filter(this.adapter, userTurnElements, this._rowRoute);
         return { selector, userTurnElements };
+    }
+
+    _rememberTimelineRows(elements, initial = false) {
+        const retained = this._rowScope ? elements.filter(element => this._rowScope.contains(element)) : [];
+        const rows = retained.length ? retained : elements;
+        if (this._routeRows.remember(this.adapter, rows, this._rowRoute, {
+            initial, previousElements: this._ownedTimelineRows
+        })) {
+            this._ownedTimelineRows = rows;
+            if (!retained.length) this._rowScope = this.conversationContainer;
+        }
     }
 
     async init() {
         this._currentPlatform = await getCurrentPlatform();
-        if (this._destroyed) return false;
+        if (!this.isCurrentPage()) return false;
         this.siteNameMap = await getSiteNameMap();
-        if (this._destroyed) return false;
+        if (!this.isCurrentPage()) return false;
 
         const elementsFound = await this.findCriticalElements();
-        if (this._destroyed || !elementsFound) return false;
+        if (!this.isCurrentPage() || !elementsFound) return false;
         this.cleanupScrollPadding();
         
         // ✅ 同步深色模式状态到 html 元素
@@ -362,23 +451,22 @@ class TimelineManager {
         });
         let firstTurn = prepared.userTurnElements[0] || null;
         if (!firstTurn) {
-            firstTurn = await this.waitForElement(prepared.selector);
-            if (firstTurn) {
+            if (await this.waitForElement(prepared.selector)) {
                 prepared = this._collectUserTurnElements({
                     scope: document,
                     forcePrepare: true,
                     reason: 'initialization-ready'
                 });
-                firstTurn = prepared.userTurnElements[0] || firstTurn;
+                firstTurn = prepared.userTurnElements[0] || null;
             }
         }
-        if (!firstTurn) return false;
+        if (!firstTurn || !this.isCurrentPage()) return false;
         
         this.conversationContainer = this.adapter.findConversationContainer(firstTurn, {
             messageSelector: prepared.selector,
             userTurnElements: prepared.userTurnElements
         });
-        if (!this.conversationContainer) return false;
+        if (!this.conversationContainer?.contains(firstTurn)) return false;
 
         let parent = this.conversationContainer;
         while (parent && parent !== document.body) {
@@ -394,6 +482,14 @@ class TimelineManager {
         // 如果没找到滚动容器，使用 document 作为备用（通用方案）
         if (!this.scrollContainer) {
             this.scrollContainer = document.scrollingElement || document.documentElement || document.body;
+        }
+
+        if (this.isCurrentPage() && this.scrollContainer) {
+            const elements = prepared.userTurnElements.filter(element =>
+                this.conversationContainer.contains(element)
+            );
+            this._rememberTimelineRows(elements, true);
+            this.adapter.rememberTimelineTranscript?.(elements);
         }
         
         return this.scrollContainer !== null;
@@ -830,14 +926,169 @@ class TimelineManager {
         }
     }
 
-    recalculateAndRenderMarkers() {
-        if (!this.conversationContainer || !this.ui.timelineBar || !this.scrollContainer) return;
+    updateHistoryLoadingIndicator() {
+        const bar = this.ui?.timelineBar;
+        const dataLoading = this.adapter.isTimelineHistoryLoading?.() === true;
+        const renderPending = this.adapter.isTimelineHistoryRenderPending?.(this.markers) === true;
+        const requested = dataLoading || renderPending;
+        if (!bar) return;
+        const indicator = bar.querySelector('.ait-timeline-history-loading');
+        if (!requested) {
+            indicator?.remove();
+            return;
+        }
+        if (indicator) return;
+        const loading = document.createElement('span');
+        loading.className = 'ait-timeline-history-loading';
+        const label = (typeof TimelineI18n !== 'undefined' && TimelineI18n.getMessage('timelineHistoryLoading')) || '正在加载更多提问…';
+        loading.title = label;
+        loading.setAttribute('role', 'status');
+        loading.setAttribute('aria-label', label);
+        bar.appendChild(loading);
+    }
+
+    _findMarkerByNodeKey(nodeKey) {
+        if (nodeKey === null || nodeKey === undefined) return null;
+        if (typeof nodeKey === 'number' && this._apiTimelineMode
+            && this.adapter.areTimelineIndexesStable?.() === false) return null;
+        if (this.adapter.findMarkerByStoredIndex) {
+            return this.adapter.findMarkerByStoredIndex(nodeKey, this.markers, this.markerMap);
+        }
+        if (this.adapter.generateTurnIdFromIndex) {
+            const turnId = this.adapter.generateTurnIdFromIndex(nodeKey);
+            const marker = this.markerMap.get(turnId);
+            if (marker) return marker;
+        }
+        if (typeof nodeKey === 'number' && nodeKey >= 0 && nodeKey < this.markers.length) {
+            return this.markers[nodeKey];
+        }
+        return null;
+    }
+
+    _syncCapturedMarkerStates() {
+        if (!this._apiTimelineMode || !this.markers.length) return;
+        const indexesStable = this.adapter.areTimelineIndexesStable?.() !== false;
+        const starred = new Set();
+        const pinned = new Set();
+        this.markers.forEach((marker, index) => {
+            const key = this.adapter.extractIndexFromTurnId?.(marker.id);
+            const isStarred = (typeof key === 'string' && this.starredIndexes.has(key))
+                || (indexesStable && (this.starredIndexes.has(key) || this.starredIndexes.has(index)));
+            marker.starred = isStarred;
+            if (isStarred) starred.add(marker.id);
+            marker.dotElement?.classList.toggle('starred', isStarred);
+
+            const isPinned = (typeof key === 'string' && this.pinnedIndexes?.has(key))
+                || (indexesStable && (this.pinnedIndexes?.has(key) || this.pinnedIndexes?.has(index)));
+            marker.pinned = !!isPinned;
+            if (isPinned) pinned.add(marker.id);
+            marker.dotElement?.classList.toggle('pinned', !!isPinned);
+        });
+        this.starred = starred;
+        this.pinned = pinned;
+    }
+
+    _renderCapturedTimeline(entries) {
+        this._apiTimelineMode = true;
+        const previous = this.markerMap;
+        const indexesStable = this.adapter.areTimelineIndexesStable?.() !== false;
+        const changed = this._capturedIndexesStable !== indexesStable
+            || entries.length !== this.markers.length || entries.some((entry, index) => {
+                const marker = this.markers[index];
+                return marker?.id !== entry.id || marker?.element !== entry.element || marker?.summary !== entry.summary;
+            });
+        this._capturedIndexesStable = indexesStable;
+        if (!changed) {
+            this._syncCapturedMarkerStates();
+            this._recalcMarkerPositions();
+            this.updateVirtualRangeAndRender();
+            this.updateHistoryLoadingIndicator();
+            return;
+        }
+        const previousCount = this.markers.length;
+        this.markers = entries.map((entry, index) => {
+            const key = this.adapter.extractIndexFromTurnId?.(entry.id);
+            const old = previous.get(entry.id);
+            const offsetTop = entry.element ? this._getMessageContentTop(entry.element) : 0;
+            const nodeHeight = entry.element ? this._getMessageHeight(entry.element) : 0;
+            return {
+                ...entry,
+                apiBacked: true,
+                offsetTop,
+                offsetBottom: offsetTop + nodeHeight,
+                visualN: entries.length > 1 ? index / (entries.length - 1) : 0,
+                dotN: 0,
+                dotElement: null,
+                timeLabel: old?.timeLabel || null,
+                starred: (typeof key === 'string' && this.starredIndexes.has(key))
+                    || (indexesStable && (this.starredIndexes.has(key) || this.starredIndexes.has(index))),
+                pinned: (typeof key === 'string' && this.pinnedIndexes?.has(key))
+                    || (indexesStable && (this.pinnedIndexes?.has(key) || this.pinnedIndexes?.has(index))) || false
+            };
+        });
+        this.markerMap = new Map(this.markers.map(marker => [marker.id, marker]));
+        this.starred = new Set(this.markers.filter(marker => marker.starred).map(marker => marker.id));
+        this.pinned = new Set(this.markers.filter(marker => marker.pinned).map(marker => marker.id));
+        this._renderedNodeCount = this.markers.length;
+        this._renderedNodeIds = new Set(this.markers.map(marker => marker.id));
+        this.markersVersion++;
+        this.visibleRange = { start: 0, end: -1 };
+        this.zeroTurnsTimer = TimelineUtils.clearTimerSafe(this.zeroTurnsTimer);
+        this.injectToggleButton();
+        this.updateTimelineHeight();
+        this.updateTimelineGeometry();
+        if (!this.activeTurnId && this.markers.length > 0) {
+            this.activeTurnId = this.markers[this.markers.length - 1].id;
+        }
+        this.computeActiveByScroll();
+        this.syncTimelineTrackToMain();
+        this.updateVirtualRangeAndRender();
+        this.updateActiveDotUI();
+        this.updateHistoryLoadingIndicator();
+        this.updateIntersectionObserverTargets(entries.map(entry => entry.element).filter(Boolean));
+        if (previousCount !== this.markers.length) {
+            this.lastNodesChange = { count: this.markers.length, previousCount, timestamp: Date.now() };
+            this._captureAutoBottomJumpCandidate?.(previousCount, this.markers.length);
+            try {
+                window.dispatchEvent(new CustomEvent('timeline:nodesChange', {
+                    detail: { count: this.markers.length, previousCount, adapter: this.adapter }
+                }));
+            } catch {}
+        }
+        this.handleInitialNavigationOrRestore((nodeKey) => this._findMarkerByNodeKey(nodeKey)).catch(() => {});
+    }
+
+    navigateToStoredNode(key) {
+        if (this.adapter.supportsDeferredNodeNavigation?.() !== true) return false;
+        if (key === null || key === undefined || key === '' || (typeof key === 'number' && (!Number.isFinite(key) || key < 0))) return false;
+        return this._startNodeNavigation(() => this._findMarkerByNodeKey(key), { waitForTarget: true });
+    }
+
+    recalculateAndRenderMarkers(preparedContext = null) {
+        if (!this.isCurrentPage() || !this.conversationContainer || !this.ui.timelineBar || !this.scrollContainer) return;
 
         this.adapter.syncCapturedChatsData?.();
-        let userTurnElements = this._collectUserTurnElements({
-            scope: this.conversationContainer,
-            reason: 'marker-recalculation'
-        }).userTurnElements;
+        this.updateHistoryLoadingIndicator();
+        let userTurnElements = preparedContext?.userTurnElements || null;
+        if (userTurnElements) {
+            userTurnElements = this._routeRows.filter(this.adapter, Array.from(userTurnElements), this._rowRoute).filter(el =>
+                el === this.conversationContainer || this.conversationContainer.contains(el)
+            );
+        } else {
+            userTurnElements = this._collectUserTurnElements({
+                scope: this.conversationContainer,
+                reason: 'marker-recalculation'
+            }).userTurnElements;
+        }
+        this._rememberTimelineRows(userTurnElements);
+        this.adapter.updateTimelineTranscript?.(userTurnElements);
+        const capturedEntries = this.adapter.getCapturedTimelineEntries?.(Array.from(userTurnElements), this.conversationContainer);
+        if (capturedEntries?.length) {
+            this._renderCapturedTimeline(capturedEntries);
+            window.questionListPopup?.onMarkersRebuilt?.();
+            return;
+        }
+        this._apiTimelineMode = false;
         
         // Reset visible window to avoid cleaning with stale indices after rebuild
         this.visibleRange = { start: 0, end: -1 };
@@ -1505,11 +1756,11 @@ class TimelineManager {
         } catch {}
     }
 
-    updateIntersectionObserverTargets() {
+    updateIntersectionObserverTargets(userTurnElements = null) {
         if (!this.intersectionObserver || !this.conversationContainer) return;
         this.intersectionObserver.disconnect();
         this.visibleUserTurns.clear();
-        const userTurns = this._collectUserTurnElements({
+        const userTurns = userTurnElements || this._collectUserTurnElements({
             scope: this.conversationContainer,
             reason: 'intersection-targets'
         }).userTurnElements;
@@ -1521,8 +1772,14 @@ class TimelineManager {
         this._unsubscribeCapturedChatsData = this.adapter.subscribeCapturedChatsDataUpdated?.((detail) => {
             if (this._destroyed) return;
             if (!detail?.conversationId || detail.conversationId !== this.conversationId) return;
+            if (detail.historyLoadingChanged) {
+                this.updateHistoryLoadingIndicator();
+                return;
+            }
             if (detail.rebuildMarkers) {
                 this.adapter.invalidateTimelineNodes?.('captured-data');
+            }
+            if (this.adapter.getCapturedTimelineEntries || detail.rebuildMarkers) {
                 this.recalculateAndRenderMarkers();
             } else {
                 this.refreshPlaceholderSummaries({ force: true });
@@ -1545,12 +1802,9 @@ class TimelineManager {
             const dot = e.target.closest('.ait-timeline-dot');
             if (dot) {
                 const targetId = dot.dataset.targetTurnId;
-                // Find target element by matching marker ID
-                const marker = this.markers.find(m => m.id === targetId);
-                const targetElement = marker?.element;
-                if (targetElement) {
-                    // Only scroll; let scroll-based computation set active to avoid double-flash
-                    this.smoothScrollTo(targetElement);
+                const index = this.markers.findIndex(m => m.id === targetId);
+                if (index >= 0) {
+                    this.scrollToIndex(index);
                 }
             }
         };
@@ -1605,18 +1859,8 @@ class TimelineManager {
             if (currentIndex === -1) {
                 // 没有激活节点或激活节点失效（DOM 替换后可能发生）
                 // 根据按键方向选择合适的默认节点
-                let defaultMarker;
-                if (e.key === 'ArrowUp') {
-                    // 按上键：从最后一个节点开始（符合用户向上浏览的意图）
-                    defaultMarker = this.markers[this.markers.length - 1];
-                } else {
-                    // 按下键：从第一个节点开始（符合用户向下浏览的意图）
-                    defaultMarker = this.markers[0];
-                }
-                
-                if (defaultMarker && defaultMarker.element) {
-                    this.smoothScrollTo(defaultMarker.element);
-                }
+                const defaultIndex = e.key === 'ArrowUp' ? this.markers.length - 1 : 0;
+                this.scrollToIndex(defaultIndex);
                 return;
             }
             
@@ -1635,10 +1879,7 @@ class TimelineManager {
             }
             
             // 获取目标节点并跳转
-            const targetMarker = this.markers[targetIndex];
-            if (targetMarker && targetMarker.element) {
-                this.smoothScrollTo(targetMarker.element);
-            }
+            this.scrollToIndex(targetIndex);
         };
         document.addEventListener('keydown', this.onKeyDown);
         
@@ -2379,13 +2620,18 @@ class TimelineManager {
         this._initialNavigationHandled = true;
 
         const navigateToStoredNode = (nodeKey) => {
+            if (nodeKey === null || nodeKey === undefined || nodeKey === '') return false;
             const marker = findMarkerByNodeKey?.(nodeKey);
-            if (!marker?.element) return false;
-
-            setTimeout(() => {
-                this.smoothScrollTo(marker.element);
-            }, 500);
-            return true;
+            if (marker?.element && this._isNavigationTargetReady(marker.element)) {
+                setTimeout(() => {
+                    this.smoothScrollTo(marker.element);
+                }, 500);
+                return true;
+            }
+            if (this.adapter.supportsDeferredNodeNavigation?.() === true) {
+                return this.navigateToStoredNode(nodeKey);
+            }
+            return false;
         };
 
         try {
@@ -2895,13 +3141,171 @@ class TimelineManager {
         this.updateTempPinButtonState();
     }
 
+    _showNodeNavigationLoading(controller) {
+        const i18n = typeof TimelineI18n !== 'undefined' ? TimelineI18n : null;
+        const panel = document.createElement('div');
+        panel.className = 'ait-node-navigation-loading';
+        panel.setAttribute('role', 'status');
+        panel.setAttribute('aria-live', 'polite');
+        const icon = document.createElement('span');
+        icon.className = 'ait-node-navigation-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        const spinner = document.createElement('span');
+        spinner.className = 'ait-node-navigation-spinner';
+        spinner.setAttribute('aria-hidden', 'true');
+        icon.appendChild(spinner);
+        const content = document.createElement('div');
+        content.className = 'ait-node-navigation-content';
+        const title = document.createElement('div');
+        title.className = 'ait-node-navigation-title';
+        title.textContent = i18n?.getMessage('timelineNodeLoading') || '正在滚动到目标对话…';
+        const cancelButton = document.createElement('button');
+        cancelButton.type = 'button';
+        cancelButton.textContent = i18n?.getMessage('commonCancel') || '取消';
+        cancelButton.addEventListener('click', () => controller.abort('cancel-navigation'));
+        content.appendChild(title);
+        panel.append(icon, content, cancelButton);
+        document.body.appendChild(panel);
+        const onEscape = event => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            controller.abort('cancel-navigation');
+        };
+        const close = () => {
+            panel.remove();
+            document.removeEventListener('keydown', onEscape, true);
+            controller.signal.removeEventListener('abort', close);
+        };
+        document.addEventListener('keydown', onEscape, true);
+        controller.signal.addEventListener('abort', close, { once: true });
+        return {
+            close,
+            showFailure: onRetry => {
+                panel.setAttribute('role', 'alert');
+                spinner.remove();
+                icon.textContent = '!';
+                title.textContent = i18n?.getMessage('timelineNodeLoadFailed') || '该提问暂未加载，请稍后重试';
+                cancelButton.textContent = i18n?.getMessage('commonCancel') || '取消';
+                const retryButton = document.createElement('button');
+                retryButton.type = 'button';
+                retryButton.textContent = i18n?.getMessage('timelineNodeRetry') || '重试';
+                retryButton.addEventListener('click', () => {
+                    retryButton.disabled = true;
+                    onRetry();
+                });
+                panel.insertBefore(retryButton, cancelButton);
+            }
+        };
+    }
+
+    _isNavigationTargetReady(element) {
+        return element?.isConnected
+            && (this.adapter.isTimelineTargetInScope?.(element, this.conversationContainer) ?? true)
+            && (this.adapter.isTimelineTargetReady?.(element) ?? true);
+    }
+
+    _waitForNodeNavigation(signal) {
+        return new Promise(resolve => {
+            const finish = () => {
+                clearTimeout(timer);
+                signal.removeEventListener('abort', finish);
+                resolve();
+            };
+            const timer = setTimeout(finish, 250);
+            signal.addEventListener('abort', finish, { once: true });
+            if (signal.aborted) finish();
+        });
+    }
+
+    _startNodeNavigation(getMarker, { waitForTarget = false, restartHistory = false } = {}) {
+        if (this._destroyed || this.adapter.supportsDeferredNodeNavigation?.() !== true) return false;
+        this._markerNavigationController?.abort('superseded-navigation');
+        const controller = new AbortController();
+        this._markerNavigationController = controller;
+        const task = { status: 'loading', getMarker };
+        this._nodeNavigationTask = task;
+        const deadline = Date.now() + 120000;
+        const isReady = element => this._isNavigationTargetReady(element);
+
+        let loading = null;
+        const ensureLoading = () => loading ||= this._showNodeNavigationLoading(controller);
+        const cleanup = () => {
+            loading?.close();
+            loading = null;
+            controller.signal.removeEventListener('abort', onAbort);
+            if (this._nodeNavigationTask === task) this._nodeNavigationTask = null;
+        };
+        const onAbort = () => {
+            task.status = 'cancelled';
+            cleanup();
+        };
+        controller.signal.addEventListener('abort', onAbort, { once: true });
+        const navigate = async () => {
+            if (waitForTarget) this.adapter.syncCapturedChatsData?.({ force: true, restartHistory });
+            while (!controller.signal.aborted && this.isCurrentPage() && Date.now() < deadline) {
+                const marker = getMarker();
+                if (!marker) {
+                    ensureLoading();
+                    await this._waitForNodeNavigation(controller.signal);
+                    continue;
+                }
+                let element = marker.element;
+                if (!isReady(element)) {
+                    ensureLoading();
+                    if (this.adapter.resolveTimelineTarget) {
+                        const conversationContainer = this.conversationContainer;
+                        const scrollContainer = this.scrollContainer;
+                        const isScopeCurrent = () => this.conversationContainer === conversationContainer
+                            && this.scrollContainer === scrollContainer;
+                        const filterRows = rows => this._routeRows.filter(this.adapter, rows, this._rowRoute);
+                        element = await this.adapter.resolveTimelineTarget(marker, scrollContainer,
+                            controller.signal, undefined, { deadline, waitForTarget, conversationContainer, isScopeCurrent, filterRows });
+                        if (!isScopeCurrent()) continue;
+                        if (!isReady(element) && !waitForTarget) return false;
+                    }
+                    if (controller.signal.aborted || this._destroyed) return false;
+                    if (!isReady(element)) {
+                        await this._waitForNodeNavigation(controller.signal);
+                        continue;
+                    }
+                }
+                if (controller.signal.aborted || !this.markerMap.has(marker.id)) return false;
+                this.smoothScrollTo(element, 400);
+                return true;
+            }
+            return false;
+        };
+        task.promise = (async () => {
+            try {
+                if (await navigate()) {
+                    task.status = 'reached';
+                    cleanup();
+                    return true;
+                }
+            } catch {}
+            if (controller.signal.aborted || !this.isCurrentPage()) {
+                cleanup();
+                return false;
+            }
+            task.status = 'failed';
+            ensureLoading().showFailure(() => {
+                if (!controller.signal.aborted && !this._destroyed) {
+                    this._startNodeNavigation(getMarker, { waitForTarget, restartHistory: true });
+                }
+            });
+            return false;
+        })();
+        return true;
+    }
+
     /**
      * ✅ 对外 API：根据索引滚动到指定节点
      * @param {number} index - 节点索引（0-based），支持负数（-1 表示最后一个）
      * @returns {boolean} - 是否成功滚动
      */
     scrollToIndex(index) {
-        if (!this.markers || this.markers.length === 0) return false;
+        if (!this.isCurrentPage() || !this.markers || this.markers.length === 0) return false;
         
         // 支持负数索引（如 -1 表示最后一个）
         let targetIndex = index;
@@ -2913,10 +3317,76 @@ class TimelineManager {
         if (targetIndex < 0 || targetIndex >= this.markers.length) return false;
         
         const marker = this.markers[targetIndex];
-        if (!marker?.element) return false;
-
         this.setPinNavigationActive(false);
-        this.smoothScrollTo(marker.element);
+
+        if (this.adapter.supportsDeferredNodeNavigation?.() !== true) {
+            if (!marker?.element) return false;
+            this.smoothScrollTo(marker.element);
+            return true;
+        }
+        if (!marker) return false;
+        if (this._isNavigationTargetReady(marker.element)) {
+            this._markerNavigationController?.abort('superseded-navigation');
+            this.smoothScrollTo(marker.element);
+            return true;
+        }
+        if (!this.adapter.resolveTimelineTarget) return false;
+
+        this._markerNavigationController?.abort('superseded-navigation');
+        const controller = new AbortController();
+        this._markerNavigationController = controller;
+        const deadline = Date.now() + 120000;
+
+        let loading = null;
+        const closeLoading = () => {
+            if (!loading) return;
+            loading.close();
+            loading = null;
+        };
+        const cleanup = () => {
+            closeLoading();
+            controller.signal.removeEventListener('abort', cleanup);
+        };
+        controller.signal.addEventListener('abort', cleanup, { once: true });
+
+        const navigate = async () => {
+            let element = marker.element;
+            while (!controller.signal.aborted && this.isCurrentPage() && Date.now() < deadline) {
+                if (!this._isNavigationTargetReady(element)) {
+                    const conversationContainer = this.conversationContainer;
+                    const scrollContainer = this.scrollContainer;
+                    const isScopeCurrent = () => this.conversationContainer === conversationContainer
+                        && this.scrollContainer === scrollContainer;
+                    const filterRows = rows => this._routeRows.filter(this.adapter, rows, this._rowRoute);
+                    loading = this._showNodeNavigationLoading(controller);
+                    element = await this.adapter.resolveTimelineTarget(marker, scrollContainer,
+                        controller.signal, undefined, {
+                            deadline,
+                            waitForTarget: true,
+                            conversationContainer,
+                            isScopeCurrent,
+                            filterRows
+                        });
+                    closeLoading();
+                    if (controller.signal.aborted || !this.isCurrentPage()) return false;
+                    if (!isScopeCurrent()) {
+                        element = null;
+                        continue;
+                    }
+                    if (!this._isNavigationTargetReady(element)) return false;
+                }
+                this.smoothScrollTo(element, 400);
+                return true;
+            }
+            return false;
+        };
+        const showFailure = () => {
+            if (!controller.signal.aborted && this.isCurrentPage()) {
+                const i18n = typeof TimelineI18n !== 'undefined' ? TimelineI18n : null;
+                this.showErrorToast?.(i18n?.getMessage('timelineNodeLoadFailed') || '该提问暂未加载，请稍后重试');
+            }
+        };
+        void navigate().then(reached => { if (!reached) showFailure(); }).catch(showFailure).finally(cleanup);
         return true;
     }
     
@@ -3140,6 +3610,7 @@ class TimelineManager {
     refreshPlaceholderSummaries({ force = false } = {}) {
         let updatedCount = 0;
         this.markers.forEach(marker => {
+            if (!marker.element) return;
             const previous = String(marker.summary || '').trim();
             if (!force && !this.adapter.isPlaceholderSummary?.(previous)) return;
 
@@ -3404,6 +3875,14 @@ class TimelineManager {
 
     syncTimelineTrackToMain() {
         if (!this.ui.track || !this.scrollContainer || !this.contentHeight) return;
+        if (this._apiTimelineMode) {
+            const index = this.markers.findIndex(marker => marker.id === this.activeTurnId);
+            if (index >= 0 && Number.isFinite(this.yPositions?.[index])) {
+                this.ui.track.scrollTop = Math.max(0, this.yPositions[index] - this.ui.track.clientHeight * 0.45);
+            }
+            this.updateTimelineToolbarPosition();
+            return;
+        }
         const scrollTop = this.scrollContainer.scrollTop;
         const ref = scrollTop + this.scrollContainer.clientHeight * 0.45;
         const span = Math.max(1, this.contentSpanPx || 1);
@@ -3713,6 +4192,14 @@ class TimelineManager {
      */
     _recalcMarkerPositions() {
         if (!this.scrollContainer || this.markers.length === 0) return;
+        if (this._apiTimelineMode) {
+            this.markers.forEach(marker => {
+                if (!marker.element?.isConnected || this.adapter.isTimelineTargetReady?.(marker.element) === false) return;
+                marker.offsetTop = this._getMessageContentTop(marker.element);
+                marker.offsetBottom = marker.offsetTop + this._getMessageHeight(marker.element);
+            });
+            return;
+        }
         
         // DOM 引用失效时触发完整重算
         const hasInvalidElement = this.markers.some(m => !m.element?.isConnected);
@@ -3771,7 +4258,21 @@ class TimelineManager {
         
         let activeId = this.markers[0].id;
         
-        if (isReverseScroll) {
+        if (this._apiTimelineMode) {
+            const loaded = this.markers.filter(marker => marker.element?.isConnected
+                && this.adapter.isTimelineTargetReady?.(marker.element) !== false);
+            const threshold = this._getScrollViewportTop() + this.ACTIVATE_AHEAD;
+            activeId = loaded[0]?.id || this.activeTurnId || activeId;
+            for (const marker of loaded) {
+                if (this._getMessageRect(marker.element).top > threshold) break;
+                activeId = marker.id;
+            }
+            const { maxScrollTop, clientHeight } = this._getCleanScrollMetrics();
+            const scrollTop = this._getScrollTop();
+            if (clientHeight > 0 && maxScrollTop > 0 && maxScrollTop - scrollTop <= 1) {
+                activeId = this.markers[this.markers.length - 1].id;
+            }
+        } else if (isReverseScroll) {
             // 反向滚动：实时计算位置
             const containerTop = this.scrollContainer.getBoundingClientRect().top;
             const activateThreshold = containerTop + this.ACTIVATE_AHEAD;
@@ -3906,7 +4407,9 @@ class TimelineManager {
     }
 
     destroy() {
+        if (this._destroyed) return;
         this._destroyed = true;
+        this._markerNavigationController?.abort();
         this.cancelScrollNavigation();
         try { this.flushScrollPositionSave(); } catch {}
         this._folderManagerInitTimer = TimelineUtils.clearTimerSafe(this._folderManagerInitTimer);
@@ -4556,7 +5059,7 @@ class TimelineManager {
     
     // ✅ 显示错误提示（使用全局 Toast 管理器）
     showErrorToast(message, targetElement) {
-        window.globalToastManager.error(message, targetElement);
+        window.globalToastManager?.error(message, targetElement);
     }
     
     // ✅ 检查是否有收藏数据

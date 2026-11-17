@@ -66,6 +66,11 @@ class SiteAdapter {
     syncCapturedChatsData() {
     }
 
+    /** 平台明确开启后，节点跳转与收藏定位才使用等待正文和失败重试流程。 */
+    supportsDeferredNodeNavigation() {
+        return false;
+    }
+
     /** 订阅平台接口捕获数据的更新。 */
     subscribeCapturedChatsDataUpdated(callback) {
         return () => {};
